@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-20
+archived: 2026-09-20
+summary: Added /calc command with safe AST-based arithmetic evaluation. Supports +, -, *, /, //, %, ** operators. No eval() usage. Triggered by user feedback requesting a calculator feature.

@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-20
+archived: 2026-09-20
+summary: Improved command discoverability by tightening /start and /help copy, updating BotCommand descriptions, and guarding command registration against Telegram unavailability at startup.

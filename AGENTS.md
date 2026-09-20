@@ -43,6 +43,20 @@ openspec-leader  →  planner  →  evaluator  →  coder
 
 Never call `coder` directly without a backed change. If the evaluator has not approved, do not proceed.
 
+### Branch rule (non-negotiable)
+
+**Create a dedicated branch before writing any code.** Branch off `main` using the change name:
+
+```
+git checkout main
+git checkout -b <change-name>   # e.g. add-calculator
+```
+
+- One branch per OpenSpec change.
+- Never implement directly on `main`.
+- Merge back to `main` only after all tasks are checked and tests pass.
+- If you find yourself on `main` when implementation starts, stop and create the branch first.
+
 ---
 
 ## OpenSpec change structure
