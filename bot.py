@@ -1,6 +1,7 @@
 import logging
 import os
 from telegram import Update
+from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -61,11 +62,11 @@ async def feedback_suggestion(
     )
 
     await update.message.reply_text(
-        "✅ *Thank you for your feedback!*\n\n"
-        f"*Issue reported:*\n{bug}\n\n"
-        f"*Your suggestion:*\n{suggestion}\n\n"
-        "We appreciate your input and will use it to improve the bot. 🙏",
-        parse_mode="Markdown",
+        "✅ *Thank you for your feedback\\!*\n\n"
+        f"*Issue reported:*\n{escape_markdown(bug, version=2)}\n\n"
+        f"*Your suggestion:*\n{escape_markdown(suggestion, version=2)}\n\n"
+        "We appreciate your input and will use it to improve the bot\\. 🙏",
+        parse_mode="MarkdownV2",
     )
     context.user_data.clear()
     return ConversationHandler.END
