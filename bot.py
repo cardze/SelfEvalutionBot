@@ -71,7 +71,7 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
         "What bug or current feature didn't meet your expectation?\n\n"
-        "Hint: You can type /cancel anytime to stop this flow.",
+        "Hint: You can type /cancel anytime to stop this flow\\.",
         parse_mode="MarkdownV2",
     )
     return STEP_BUG
