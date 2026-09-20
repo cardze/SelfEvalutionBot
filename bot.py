@@ -29,9 +29,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "📝 *Feedback Form* (Step 1 of 2)\n\n"
+        "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
         "What bug or current feature didn't meet your expectation?",
-        parse_mode="Markdown",
+        parse_mode="MarkdownV2",
     )
     return STEP_BUG
 
@@ -39,9 +39,9 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def feedback_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["bug"] = update.message.text
     await update.message.reply_text(
-        "📝 *Feedback Form* (Step 2 of 2)\n\n"
+        "📝 *Feedback Form* \\(Step 2 of 2\\)\n\n"
         "How do you suggest fixing the bug or what new feature would you like?",
-        parse_mode="Markdown",
+        parse_mode="MarkdownV2",
     )
     return STEP_SUGGESTION
 
@@ -54,11 +54,10 @@ async def feedback_suggestion(
     suggestion = update.message.text
 
     logger.info(
-        "Feedback from %s (id=%s): bug=%r suggestion=%r",
-        user.username or user.first_name,
+        "Feedback received from user id=%s: bug_length=%d suggestion_length=%d",
         user.id,
-        bug,
-        suggestion,
+        len(bug),
+        len(suggestion),
     )
 
     await update.message.reply_text(
