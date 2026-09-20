@@ -9,7 +9,7 @@
 - [x] 2.1 Create db.py module with PostgreSQL connection pool initialization
 - [x] 2.2 Implement startup validation: connect, run init.sql if needed, return pool or raise clear error
 - [x] 2.3 Add environment variable parsing (POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD)
-- [ ] 2.4 Test startup failure scenarios: connection refused, invalid credentials, missing database
+- [x] 2.4 Test startup failure scenarios: connection refused, invalid credentials, missing database
 
 ## 3. Storage Service Layer
 
