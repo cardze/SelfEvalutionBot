@@ -1,0 +1,4 @@
+- [ ] 1. Update `/start` copy to explain how to find command suggestions
+- [ ] 2. Tighten `/help` copy into a short command summary with the same hint
+- [ ] 3. Align command descriptions with the new wording
+- [ ] 4. Verify the bot still exposes `/start`, `/help`, `/feedback`, and `/cancel`
