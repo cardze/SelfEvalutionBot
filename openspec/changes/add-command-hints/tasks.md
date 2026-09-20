@@ -1,4 +1,5 @@
-- [ ] 1. Update `/start` copy to explain how to find command suggestions
-- [ ] 2. Tighten `/help` copy into a short command summary with the same hint
-- [ ] 3. Align command descriptions with the new wording
-- [ ] 4. Verify the bot still exposes `/start`, `/help`, `/feedback`, and `/cancel`
+- [x] 1. Update `/start` copy to explain how to find command suggestions
+- [x] 2. Tighten `/help` copy into a short command summary with the same hint
+- [x] 3. Align command descriptions with the new wording
+- [x] 4. Verify the bot still exposes `/start`, `/help`, `/feedback`, and `/cancel`
+- [x] 5. Confirm the bot survives startup and polling even when Telegram command registration is slow or unavailable

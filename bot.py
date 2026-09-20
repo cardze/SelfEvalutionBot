@@ -28,31 +28,38 @@ STEP_BUG, STEP_SUGGESTION = range(2)
 
 
 async def setup_bot_commands(application: Application) -> None:
-    await application.bot.set_my_commands(
-        [
-            BotCommand("start", "Show the welcome message and available commands"),
-            BotCommand("feedback", "Start the two-step feedback form"),
-            BotCommand("cancel", "Cancel the current feedback flow"),
-            BotCommand("help", "Show usage hints and command tips"),
-        ]
-    )
+    try:
+        await application.bot.set_my_commands(
+            [
+                BotCommand("start", "Start here and type / for command suggestions"),
+                BotCommand("feedback", "Share feedback with the bot"),
+                BotCommand("cancel", "Cancel the current feedback flow"),
+                BotCommand("help", "Show the command list and tips"),
+            ]
+        )
+    except Exception as exc:
+        logger.warning(
+            "Telegram command registration failed; continuing without custom commands: %s",
+            exc,
+        )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Welcome to SelfEvaluationBot! 🤖\n"
         "Use /feedback to share your feedback and help us improve.\n"
-        "Hint: Telegram will suggest /start, /feedback, /cancel, and /help when you type /."
+        "Type / to see available commands and suggestions in Telegram."
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Available commands:\n"
-        "/start - Show the welcome message\n"
+        "/start - Start here and see the welcome message\n"
+        "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
         "/cancel - Cancel the current feedback flow\n\n"
-        "Tip: type / in Telegram to see command suggestions."
+        "Tip: type / in Telegram to see the built-in command suggestions."
     )
 
 
@@ -130,13 +137,26 @@ def main() -> None:
     except Exception as e:
         logger.error(str(e))
         raise
-    
+
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
     application = Application.builder().token(token).build()
-    asyncio.run(setup_bot_commands(application))
+
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        if not loop.is_running():
+            loop.run_until_complete(setup_bot_commands(application))
+    except Exception as exc:
+        logger.warning(
+            "Skipping custom Telegram command registration: %s",
+            exc,
+        )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
