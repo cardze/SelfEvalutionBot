@@ -1,7 +1,8 @@
+import asyncio
 import logging
 import os
 import asyncio
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application,
@@ -26,10 +27,32 @@ feedback_service = FeedbackService()
 STEP_BUG, STEP_SUGGESTION = range(2)
 
 
+async def setup_bot_commands(application: Application) -> None:
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "Show the welcome message and available commands"),
+            BotCommand("feedback", "Start the two-step feedback form"),
+            BotCommand("cancel", "Cancel the current feedback flow"),
+            BotCommand("help", "Show usage hints and command tips"),
+        ]
+    )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Welcome to SelfEvaluationBot! 🤖\n"
-        "Use /feedback to share your feedback and help us improve."
+        "Use /feedback to share your feedback and help us improve.\n"
+        "Hint: Telegram will suggest /start, /feedback, /cancel, and /help when you type /."
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Available commands:\n"
+        "/start - Show the welcome message\n"
+        "/feedback - Start the feedback form\n"
+        "/cancel - Cancel the current feedback flow\n\n"
+        "Tip: type / in Telegram to see command suggestions."
     )
 
 
@@ -40,7 +63,8 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     await update.message.reply_text(
         "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
-        "What bug or current feature didn't meet your expectation?",
+        "What bug or current feature didn't meet your expectation?\n\n"
+        "Hint: You can type /cancel anytime to stop this flow.",
         parse_mode="MarkdownV2",
     )
     return STEP_BUG
@@ -112,8 +136,10 @@ def main() -> None:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
     application = Application.builder().token(token).build()
+    asyncio.run(setup_bot_commands(application))
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
 
     feedback_handler = ConversationHandler(
         entry_points=[CommandHandler("feedback", feedback_start)],
