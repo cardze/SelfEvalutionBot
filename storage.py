@@ -65,7 +65,7 @@ class FeedbackService:
         Returns:
             True if event was recorded, False if storage failed
         """
-        if event_type not in ("started", "cancelled", "submitted"):
+        if event_type not in ("started", "cancelled", "submitted", "resolved"):
             logger.warning(f"Unknown event type: {event_type}")
             return False
         
@@ -88,6 +88,88 @@ class FeedbackService:
             logger.error(f"❌ Failed to record event: user_id={user_id}, event_type={event_type}, error={str(e)}")
             return False
     
+    @staticmethod
+    def resolve_submission(submission_id: UUID) -> bool:
+        """
+        Mark a feedback submission as resolved by inserting a 'resolved' event.
+
+        Args:
+            submission_id: UUID of the submission to resolve
+
+        Returns:
+            True if the event was recorded, False on failure
+        """
+        try:
+            conn = get_connection()
+            with closing(conn):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT user_id FROM feedback_submissions WHERE id = %s",
+                        (submission_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        logger.warning(f"resolve_submission: no submission found for id={submission_id}")
+                        return False
+                    user_id = row[0]
+                    cur.execute(
+                        """
+                        INSERT INTO feedback_events (user_id, event_type, feedback_submission_id)
+                        VALUES (%s, 'resolved', %s)
+                        """,
+                        (user_id, submission_id),
+                    )
+                conn.commit()
+            logger.info(f"✓ Submission resolved: submission_id={submission_id}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to resolve submission: submission_id={submission_id}, error={str(e)}")
+            return False
+
+    @staticmethod
+    def get_unresolved_feedback(limit: int = 1) -> list[dict]:
+        """
+        Fetch the oldest feedback submissions that have no 'resolved' event.
+
+        Args:
+            limit: Maximum number of rows to return
+
+        Returns:
+            List of dicts with id, user_id, bug_text, suggestion_text, created_at
+        """
+        try:
+            conn = get_connection()
+            with closing(conn):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT s.id, s.user_id, s.bug_text, s.suggestion_text, s.created_at
+                        FROM feedback_submissions s
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM feedback_events e
+                            WHERE e.feedback_submission_id = s.id
+                              AND e.event_type = 'resolved'
+                        )
+                        ORDER BY s.created_at ASC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                    rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "user_id": r[1],
+                    "bug_text": r[2],
+                    "suggestion_text": r[3],
+                    "created_at": r[4],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch unresolved feedback: {str(e)}")
+            return []
+
     @staticmethod
     def get_feedback(filters=None):
         """

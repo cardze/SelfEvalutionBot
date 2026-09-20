@@ -18,7 +18,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_submissions_user_id
 CREATE TABLE IF NOT EXISTS feedback_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id BIGINT NOT NULL,
-    event_type VARCHAR(20) NOT NULL,  -- 'started', 'cancelled', 'submitted'
+    event_type VARCHAR(20) NOT NULL,  -- 'started', 'cancelled', 'submitted', 'resolved'
     feedback_submission_id UUID REFERENCES feedback_submissions(id) ON DELETE SET NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
