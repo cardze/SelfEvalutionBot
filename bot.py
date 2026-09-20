@@ -1,7 +1,8 @@
+import ast
 import asyncio
 import logging
+import operator
 import os
-import asyncio
 from telegram import Update, BotCommand
 from telegram.helpers import escape_markdown
 from telegram.ext import (
@@ -26,6 +27,29 @@ feedback_service = FeedbackService()
 
 STEP_BUG, STEP_SUGGESTION = range(2)
 
+_BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+_UNOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+
+def _eval_expr(node):
+    if isinstance(node, ast.Expression):
+        return _eval_expr(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _BINOPS:
+        return _BINOPS[type(node.op)](_eval_expr(node.left), _eval_expr(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNOPS:
+        return _UNOPS[type(node.op)](_eval_expr(node.operand))
+    raise ValueError("unsupported expression")
+
 
 async def setup_bot_commands(application: Application) -> None:
     try:
@@ -33,6 +57,7 @@ async def setup_bot_commands(application: Application) -> None:
             [
                 BotCommand("start", "Start here and type / for command suggestions"),
                 BotCommand("feedback", "Share feedback with the bot"),
+                BotCommand("calc", "Evaluate an arithmetic expression, e.g. /calc 2 + 3"),
                 BotCommand("cancel", "Cancel the current feedback flow"),
                 BotCommand("help", "Show the command list and tips"),
             ]
@@ -58,9 +83,28 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start - Start here and see the welcome message\n"
         "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
+        "/calc - Evaluate an arithmetic expression (e.g. /calc 2 + 3)\n"
         "/cancel - Cancel the current feedback flow\n\n"
         "Tip: type / in Telegram to see the built-in command suggestions."
     )
+
+
+async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /calc <expression>\nExample: /calc 2 + 3"
+        )
+        return
+    expr = " ".join(context.args)
+    try:
+        tree = ast.parse(expr, mode="eval")
+        result = _eval_expr(tree)
+        text = str(int(result) if isinstance(result, float) and result.is_integer() else result)
+        await update.message.reply_text(text)
+    except ZeroDivisionError:
+        await update.message.reply_text("Error: division by zero")
+    except Exception:
+        await update.message.reply_text("Invalid expression. Example: /calc 2 + 3")
 
 
 async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -160,6 +204,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("calc", calc))
 
     feedback_handler = ConversationHandler(
         entry_points=[CommandHandler("feedback", feedback_start)],

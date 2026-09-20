@@ -1,0 +1,5 @@
+- [x] 1. Implement safe `_eval_expr` using `ast` in `bot.py`
+- [x] 2. Add `calc` handler that parses `context.args` and replies with result or error
+- [x] 3. Register `CommandHandler("calc", calc)` in `main()`
+- [x] 4. Add `/calc` to `setup_bot_commands` and `/help` reply text
+- [x] 5. Write tests covering happy path, no-args, invalid expression, and division by zero
