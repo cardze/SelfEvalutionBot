@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from telegram import Update
 from telegram.helpers import escape_markdown
 from telegram.ext import (
@@ -10,12 +11,17 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from storage import FeedbackService
+import db
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+# Initialize storage service
+feedback_service = FeedbackService()
 
 STEP_BUG, STEP_SUGGESTION = range(2)
 
@@ -28,6 +34,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    # Record event in database (run in thread to avoid blocking)
+    await asyncio.to_thread(feedback_service.record_event, user.id, "started")
+    
     await update.message.reply_text(
         "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
         "What bug or current feature didn't meet your expectation?",
@@ -60,6 +70,14 @@ async def feedback_suggestion(
         len(suggestion),
     )
 
+    # Store submission and record event in database (run in thread to avoid blocking)
+    submission_id = await asyncio.to_thread(
+        feedback_service.store_submission, user.id, bug, suggestion
+    )
+    await asyncio.to_thread(
+        feedback_service.record_event, user.id, "submitted", submission_id
+    )
+
     await update.message.reply_text(
         "✅ *Thank you for your feedback\\!*\n\n"
         f"*Issue reported:*\n{escape_markdown(bug, version=2)}\n\n"
@@ -72,12 +90,23 @@ async def feedback_suggestion(
 
 
 async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    # Record event in database (run in thread to avoid blocking)
+    await asyncio.to_thread(feedback_service.record_event, user.id, "cancelled")
+    
     await update.message.reply_text("Feedback cancelled. Feel free to use /feedback anytime.")
     context.user_data.clear()
     return ConversationHandler.END
 
 
 def main() -> None:
+    # Initialize database before setting up bot
+    try:
+        db.init_database()
+    except Exception as e:
+        logger.error(str(e))
+        raise
+    
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")

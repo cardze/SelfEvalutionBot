@@ -1,0 +1,21 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+context: |
+  Tech stack: Python 3.x, python-telegram-bot, PostgreSQL, psycopg3
+  Runtime: Telegram bot polling model
+  Persistence: PostgreSQL for feedback data, environment variable config
+  Conventions: Async handlers, error logging, fail-fast startup validation
+  Domain: User feedback collection and storage for bot self-evaluation
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
