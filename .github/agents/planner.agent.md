@@ -10,7 +10,7 @@ You are the project planner. Your job is to decide the next actionable work item
 
 1. Check whether there is an active OpenSpec change in the repo.
 2. If a current change exists, summarize it and recommend the next step for that change.
-3. If no current change exists, find the oldest feedback item that is not marked done.
+3. If no current change exists, use the `planner-fetch-feedback` skill to get the next actionable feedback item (and clarify it with the submitter if it is ambiguous).
 4. If any unfinished feedback exists, inspect the relevant OpenSpec context and return a concise recommendation for what to do next.
 5. If no unfinished feedback exists, report that there is no queued work and suggest the next best action.
 
@@ -31,15 +31,12 @@ If there is a current OpenSpec change:
 - Return a brief recommendation rather than inventing a new path.
 
 ### 3) Handle the no-change case
-If there is no active change:
-- Find the oldest feedback item that is not marked done.
-- Use the project’s feedback source of truth, such as:
-  - database records
-  - a backlog file
-  - issue or task tracker
-  - any TODO/status column already in the repo
-- If the repo does not have an explicit `done` flag, treat “not done” as the oldest unprocessed item that does not have a completion marker.
-- Sort by creation time ascending and select the oldest unfinished item.
+
+If there is no active change, follow the `planner-fetch-feedback` skill (`.claude/skills/planner-fetch-feedback/SKILL.md`, mirrored at `.github/skills/planner-fetch-feedback/SKILL.md`):
+
+- Read the feedback queue only via `python ask.py next`. It excludes resolved feedback and items waiting on a clarification, and puts answered clarifications first.
+- Take the first actionable item. If different readings would lead to different work and no clarification exists yet, draft one question with `python ask.py draft …` (admin approves it in Telegram), then move on to the next item.
+- Use an `answered` clarification as the user's intent; for a `discarded` one, proceed with an explicit best-guess assumption.
 
 ### 4) Explore the relevant OpenSpec change
 When feedback is found:
@@ -49,7 +46,7 @@ When feedback is found:
 
 ### 5) Return the next recommended action
 Return a short, decision-oriented summary with:
-- the oldest unfinished feedback item
+- the next actionable feedback item and its clarification status
 - whether there is an active OpenSpec change
 - the relevant change or capability it aligns to
 - the next action to take

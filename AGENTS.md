@@ -92,9 +92,5 @@ See the `feedback-persistence` archived change for the original schema rationale
 
 ## Known out-of-process changes
 
-The following were implemented without a prior OpenSpec change and should be documented
-in a follow-up change before the branch is merged:
-
-| Change | Files affected | Status |
-|--------|---------------|--------|
-| Add `resolved` event type and `resolve_submission` / `get_unresolved_feedback` to `FeedbackService` | `storage.py`, `sql/init.sql` | needs OpenSpec change |
+None currently. (The `resolved` event type and `resolve_submission` / `get_unresolved_feedback`
+are now documented by the `feedback-event-integrity` spec from the `add-feedback-clarification` change.)

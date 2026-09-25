@@ -3,17 +3,29 @@ import asyncio
 import logging
 import operator
 import os
-from telegram import Update, BotCommand
+from uuid import UUID
+from telegram import Update, BotCommand, ForceReply
 from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
     MessageHandler,
     filters,
     ContextTypes,
 )
-from storage import FeedbackService
+from storage import ClarificationError, FeedbackService
+from clarify import (
+    REPLY_PROMPT_TEXT,
+    SOMETHING_ELSE_INDEX,
+    approval_keyboard,
+    deliver_question,
+    format_preview,
+    get_admin_user_id,
+    record_answer,
+)
 from dotenv import load_dotenv
 load_dotenv()
 import db
@@ -176,6 +188,133 @@ async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return ConversationHandler.END
 
 
+def _parse_callback(data: str):
+    """Split 'prefix:<uuid>:<arg>' callback data; return (UUID, arg) or None if malformed."""
+    parts = (data or "").split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        return UUID(parts[1]), parts[2]
+    except ValueError:
+        return None
+
+
+async def clarification_approval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin taps ✅ Send / ❌ Discard on a clarification preview."""
+    query = update.callback_query
+    try:
+        admin_id = get_admin_user_id()
+    except RuntimeError as exc:
+        logger.warning("Ignoring clarification approval: %s", exc)
+        await query.answer()
+        return
+    parsed = _parse_callback(query.data)
+    if query.from_user.id != admin_id or parsed is None:
+        await query.answer()
+        return
+    clarification_id, action = parsed
+
+    clarification = await asyncio.to_thread(FeedbackService.get_clarification, clarification_id)
+    if clarification is None:
+        await query.answer("Clarification not found.")
+        return
+    if clarification["status"] != "pending_approval":
+        await query.answer(f"Already {clarification['status']}.")
+        return
+
+    preview = format_preview(clarification)
+    if action == "y":
+        try:
+            await deliver_question(context.bot, clarification)
+        except ClarificationError:
+            await query.answer("Already handled.")
+            return
+        except Exception as exc:
+            logger.error("Failed to deliver clarification %s: %s", clarification_id, exc)
+            await query.answer("Send failed.")
+            await query.edit_message_text(
+                f"{preview}\n\n⚠️ Send failed: {exc}\nTap ✅ to retry or ❌ to discard.",
+                reply_markup=approval_keyboard(clarification_id),
+            )
+            return
+        await query.answer("Sent.")
+        await query.edit_message_text(f"{preview}\n\n✅ Sent")
+    elif action == "n":
+        if await asyncio.to_thread(FeedbackService.mark_discarded, clarification_id):
+            await query.answer("Discarded.")
+            await query.edit_message_text(f"{preview}\n\n❌ Discarded")
+        else:
+            await query.answer("Already handled.")
+    else:
+        await query.answer()
+
+
+async def clarification_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Submitter taps an option or "Something else" on a clarification question."""
+    query = update.callback_query
+    parsed = _parse_callback(query.data)
+    if parsed is None:
+        await query.answer()
+        return
+    clarification_id, choice = parsed
+
+    clarification = await asyncio.to_thread(FeedbackService.get_clarification, clarification_id)
+    if clarification is None or query.from_user.id != clarification["user_id"]:
+        await query.answer()
+        return
+    if clarification["status"] == "answered":
+        await query.answer("Already answered, thanks!")
+        return
+    if clarification["status"] != "sent":
+        await query.answer("This question is no longer open.")
+        return
+
+    if choice == SOMETHING_ELSE_INDEX:
+        await query.answer()
+        prompt = await context.bot.send_message(
+            chat_id=clarification["user_id"],
+            text=REPLY_PROMPT_TEXT,
+            reply_markup=ForceReply(input_field_placeholder="Your answer"),
+        )
+        await asyncio.to_thread(
+            FeedbackService.set_message_id,
+            clarification_id,
+            "reply_prompt_message_id",
+            prompt.message_id,
+        )
+        return
+
+    options = clarification["options"]
+    if not choice.isdigit() or int(choice) >= len(options):
+        await query.answer()
+        return
+    reply = await record_answer(clarification, options[int(choice)], "option")
+    await query.answer()
+    await query.edit_message_text(f"{clarification['question']}\n\n{reply}")
+
+
+async def clarification_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Capture a free-text answer sent as a reply to a stored ForceReply prompt.
+
+    Runs in handler group -1, before the /feedback conversation. Stops propagation
+    only when the message matched a clarification prompt.
+    """
+    message = update.message
+    if message is None or message.reply_to_message is None:
+        return
+    clarification = await asyncio.to_thread(
+        FeedbackService.find_clarification_by_reply_prompt,
+        update.effective_user.id,
+        message.reply_to_message.message_id,
+    )
+    if clarification is None:
+        return
+    reply = await record_answer(clarification, message.text, "free_text")
+    await message.reply_text(reply)
+    raise ApplicationHandlerStop
+
+
 def main() -> None:
     # Initialize database before setting up bot
     try:
@@ -204,6 +343,13 @@ def main() -> None:
             exc,
         )
 
+    # Clarification replies must be checked before the /feedback conversation sees the text.
+    application.add_handler(
+        MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, clarification_reply),
+        group=-1,
+    )
+    application.add_handler(CallbackQueryHandler(clarification_approval, pattern=r"^apv:"))
+    application.add_handler(CallbackQueryHandler(clarification_answer, pattern=r"^clr:"))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("calc", calc))
