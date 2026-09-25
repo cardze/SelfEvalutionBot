@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/{{MAIN}}/**)",
+      "Read(/{{HOME}}/.seb-runner/**)",
+      "Read(/{{HOME}}/.ssh/**)",
+      "Read(/{{HOME}}/.aws/**)",
+      "Read(/{{HOME}}/.config/**)",
+      "Bash(git push *)",
+      "Bash(git remote *)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyRead": [
+        "{{MAIN}}",
+        "{{HOME}}/.seb-runner",
+        "{{HOME}}/.ssh",
+        "{{HOME}}/.aws",
+        "{{HOME}}/.config"
+      ]
+    },
+    "network": {
+      "allowedDomains": ["pypi.org", "files.pythonhosted.org"]
+    }
+  }
+}

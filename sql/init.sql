@@ -38,7 +38,7 @@ ALTER TABLE feedback_events ALTER COLUMN event_type TYPE VARCHAR(50);
 ALTER TABLE feedback_events DROP CONSTRAINT IF EXISTS feedback_events_event_type_check;
 ALTER TABLE feedback_events ADD CONSTRAINT feedback_events_event_type_check
     CHECK (event_type IN ('started', 'cancelled', 'submitted', 'resolved',
-                          'clarification_requested', 'clarified'));
+                          'clarification_requested', 'clarified', 'wont_do'));
 
 -- One clarifying question per feedback submission
 CREATE TABLE IF NOT EXISTS feedback_clarifications (
@@ -64,3 +64,28 @@ CREATE TABLE IF NOT EXISTS feedback_clarifications (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_clarifications_reply_prompt
     ON feedback_clarifications(reply_prompt_message_id);
+
+-- Autonomous feedback runner: one row per runner-built change (see runner/)
+CREATE TABLE IF NOT EXISTS auto_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    feedback_submission_id UUID NOT NULL
+        REFERENCES feedback_submissions(id) ON DELETE CASCADE,
+    branch VARCHAR(100) NOT NULL,
+    workspace_path TEXT NOT NULL,
+    change_name VARCHAR(100),
+    stage VARCHAR(30) NOT NULL DEFAULT 'planning'
+        CHECK (stage IN ('planning', 'planned', 'building', 'awaiting_decision',
+                         'merged', 'rejected', 'failed')),
+    decision VARCHAR(20) CHECK (decision IN ('merge', 'reject', 'changes')),
+    decision_note TEXT,
+    merge_request_message_id BIGINT,
+    note_prompt_message_id BIGINT,
+    build_attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- At most one run in flight
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_runs_single_flight
+    ON auto_runs ((true)) WHERE stage NOT IN ('merged', 'rejected');

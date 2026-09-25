@@ -57,6 +57,26 @@ git checkout -b <change-name>   # e.g. add-calculator
 - Merge back to `main` only after all tasks are checked and tests pass.
 - If you find yourself on `main` when implementation starts, stop and create the branch first.
 
+**Exception: runner-built changes.** The autonomous feedback runner (`runner/`) builds changes in its own
+workspace clone on a branch named `auto/<submission-id-prefix>`; the OpenSpec change name is still chosen
+by the agent. Runner branches are merged into `main` **only** by the runner after the admin taps ✅ Merge
+in Telegram — never merge or push an `auto/*` branch by hand or from an agent.
+
+---
+
+## Autonomous feedback runner
+
+`runner/` turns the admin's own feedback into OpenSpec changes without a human starting anything:
+launchd starts `runner/run.sh` hourly → PLAN agent run → 📋 notice → BUILD agent run → sandboxed test
+verification → 🔀 merge request (✅ Merge / ❌ Reject / 💬 Request changes).
+
+- Agents in a runner run are sandboxed (`runner/settings.template.json`) and must never try to reach
+  secrets, the main checkout, or the network beyond PyPI. A self-test verifies this before every run.
+- The trusted runner never executes agent-written code or git config outside the sandbox (design D11
+  of the `add-autonomous-feedback-runner` change).
+- When an agent prompt begins with `AUTONOMOUS RUNNER RUN`, follow the "Autonomous runner mode"
+  section of `openspec-leader` / `planner`.
+
 ---
 
 ## OpenSpec change structure

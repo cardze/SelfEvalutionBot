@@ -20,6 +20,7 @@ EVENT_TYPES = (
     "resolved",
     "clarification_requested",
     "clarified",
+    "wont_do",
 )
 
 _CLARIFICATION_SELECT = """
@@ -343,13 +344,15 @@ class FeedbackService:
             conn.commit()
 
     @staticmethod
-    def get_actionable_feedback() -> dict:
+    def get_actionable_feedback(user_id: Optional[int] = None) -> dict:
         """
         Return the planner's work queue.
 
-        Actionable = not resolved and not waiting on the admin ('pending_approval')
-        or the submitter ('sent'). Answered clarifications come first (oldest answer
-        first), then everything else by submission age.
+        Actionable = not resolved or won't-do, not being built by the autonomous
+        runner, and not waiting on the admin ('pending_approval') or the submitter
+        ('sent'). Answered clarifications come first (oldest answer first), then
+        everything else by submission age. If user_id is given, only that
+        submitter's feedback is listed.
 
         Returns:
             {"actionable": [...], "pending_approval": int, "parked": int}
@@ -367,13 +370,21 @@ class FeedbackService:
                     LEFT JOIN feedback_clarifications c ON c.feedback_submission_id = s.id
                     WHERE NOT EXISTS (
                         SELECT 1 FROM feedback_events e
-                        WHERE e.feedback_submission_id = s.id AND e.event_type = 'resolved'
+                        WHERE e.feedback_submission_id = s.id
+                          AND e.event_type IN ('resolved', 'wont_do')
+                    )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM auto_runs r
+                        WHERE r.feedback_submission_id = s.id
+                          AND r.stage NOT IN ('merged', 'rejected')
                     )
                       AND (c.status IS NULL OR c.status IN ('answered', 'discarded'))
+                      AND (%(user_id)s::bigint IS NULL OR s.user_id = %(user_id)s::bigint)
                     ORDER BY (c.status = 'answered') IS NOT TRUE,
                              c.answered_at ASC NULLS LAST,
                              s.created_at ASC
-                    """
+                    """,
+                    {"user_id": user_id},
                 )
                 actionable = cur.fetchall()
                 cur.execute(
@@ -384,7 +395,7 @@ class FeedbackService:
                       AND NOT EXISTS (
                           SELECT 1 FROM feedback_events e
                           WHERE e.feedback_submission_id = c.feedback_submission_id
-                            AND e.event_type = 'resolved'
+                            AND e.event_type IN ('resolved', 'wont_do')
                       )
                     GROUP BY c.status
                     """
@@ -395,6 +406,123 @@ class FeedbackService:
             "pending_approval": counts.get("pending_approval", 0),
             "parked": counts.get("sent", 0),
         }
+
+    @staticmethod
+    def get_submission(submission_id: UUID) -> Optional[dict]:
+        """A submission with its clarification answer (if any), shaped like a queue entry."""
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT s.id, s.user_id, s.bug_text, s.suggestion_text, s.created_at,
+                           c.status AS clarification_status, c.question AS clarification_question,
+                           c.answer_text AS clarification_answer
+                    FROM feedback_submissions s
+                    LEFT JOIN feedback_clarifications c ON c.feedback_submission_id = s.id
+                    WHERE s.id = %s
+                    """,
+                    (submission_id,),
+                )
+                return cur.fetchone()
+
+    # ---------- autonomous runner (auto_runs) ----------
+
+    @staticmethod
+    def create_auto_run(submission_id: UUID, branch: str, workspace_path: str) -> dict:
+        """
+        Create the in-flight runner row for a submission.
+
+        Raises:
+            ClarificationError: another run is already in flight (single-flight index)
+        """
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO auto_runs (feedback_submission_id, branch, workspace_path)
+                        VALUES (%s, %s, %s)
+                        RETURNING *
+                        """,
+                        (submission_id, branch, workspace_path),
+                    )
+                except psycopg.errors.UniqueViolation as e:
+                    raise ClarificationError("Another autonomous run is already in flight") from e
+                row = cur.fetchone()
+            conn.commit()
+        logger.info(f"✓ Auto run created: run_id={row['id']}, submission_id={submission_id}")
+        return row
+
+    @staticmethod
+    def get_auto_run(run_id: UUID) -> Optional[dict]:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT * FROM auto_runs WHERE id = %s", (run_id,))
+                return cur.fetchone()
+
+    @staticmethod
+    def get_inflight_auto_run() -> Optional[dict]:
+        """Return the run that is not yet merged or rejected, if any."""
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT * FROM auto_runs WHERE stage NOT IN ('merged', 'rejected')"
+                )
+                return cur.fetchone()
+
+    @staticmethod
+    def find_auto_run_by_note_prompt(message_id: int) -> Optional[dict]:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT * FROM auto_runs WHERE note_prompt_message_id = %s", (message_id,)
+                )
+                return cur.fetchone()
+
+    _AUTO_RUN_FIELDS = (
+        "stage", "change_name", "last_error", "build_attempts", "decision",
+        "decision_note", "merge_request_message_id", "note_prompt_message_id",
+    )
+
+    @staticmethod
+    def update_auto_run(run_id: UUID, **fields) -> None:
+        """Update whitelisted auto_runs columns; always bumps updated_at."""
+        unknown = set(fields) - set(FeedbackService._AUTO_RUN_FIELDS)
+        if unknown:
+            raise ValueError(f"Unknown auto_runs fields: {sorted(unknown)}")
+        if not fields:
+            return
+        assignments = ", ".join(f"{name} = %s" for name in fields)
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE auto_runs SET {assignments}, updated_at = now() WHERE id = %s",
+                    (*fields.values(), run_id),
+                )
+            conn.commit()
+
+    @staticmethod
+    def set_auto_run_decision(run_id: UUID, decision: str, note: Optional[str] = None) -> bool:
+        """Record the admin's decision on a run waiting for one (or a failed run). Returns True if applied."""
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE auto_runs SET decision = %s, decision_note = %s, updated_at = now()
+                    WHERE id = %s AND stage IN ('awaiting_decision', 'failed')
+                    """,
+                    (decision, note, run_id),
+                )
+                applied = cur.rowcount == 1
+            conn.commit()
+        return applied
 
     @staticmethod
     def get_feedback(filters=None):

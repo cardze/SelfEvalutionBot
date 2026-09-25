@@ -114,3 +114,63 @@ def test_db_rejects_unknown_event_type(clean):
                     (TEST_USER_ID,),
                 )
         conn.rollback()
+
+
+# ---------- wont_do, user filter, autonomous runs ----------
+
+
+def _record(sub, event_type):
+    assert FeedbackService.record_event(TEST_USER_ID, event_type, sub)
+
+
+def test_wont_do_excluded(clean):
+    sub = FeedbackService.store_submission(TEST_USER_ID, "bug", "s")
+    _record(sub, "wont_do")
+    assert sub not in _ids(FeedbackService.get_actionable_feedback())
+
+
+def test_user_filter(clean):
+    sub = FeedbackService.store_submission(TEST_USER_ID, "bug", "s")
+    mine = FeedbackService.get_actionable_feedback(user_id=TEST_USER_ID)["actionable"]
+    assert [r["id"] for r in mine] == [sub]
+    other = FeedbackService.get_actionable_feedback(user_id=TEST_USER_ID - 1)["actionable"]
+    assert sub not in [r["id"] for r in other]
+
+
+@pytest.fixture
+def no_real_inflight_run():
+    if FeedbackService.get_inflight_auto_run() is not None:
+        pytest.skip("a real autonomous run is in flight")
+
+
+def test_auto_run_lifecycle(clean, no_real_inflight_run):
+    first = FeedbackService.store_submission(TEST_USER_ID, "first", "s")
+    second = FeedbackService.store_submission(TEST_USER_ID, "second", "s")
+    run = FeedbackService.create_auto_run(first, "auto/test", "/tmp/nowhere")
+    try:
+        # In-flight run hides its submission from the queue.
+        assert _ids(FeedbackService.get_actionable_feedback()) == [second]
+        assert FeedbackService.get_inflight_auto_run()["id"] == run["id"]
+
+        # Single flight: a second run is rejected by the partial unique index.
+        with pytest.raises(ClarificationError):
+            FeedbackService.create_auto_run(second, "auto/test2", "/tmp/nowhere2")
+
+        # Decisions only apply while awaiting a decision (or failed).
+        assert not FeedbackService.set_auto_run_decision(run["id"], "merge")
+        FeedbackService.update_auto_run(run["id"], stage="awaiting_decision", merge_request_message_id=77)
+        assert FeedbackService.set_auto_run_decision(run["id"], "changes", "use relative times")
+        row = FeedbackService.get_auto_run(run["id"])
+        assert (row["decision"], row["decision_note"]) == ("changes", "use relative times")
+
+        FeedbackService.update_auto_run(run["id"], note_prompt_message_id=88)
+        assert FeedbackService.find_auto_run_by_note_prompt(88)["id"] == run["id"]
+
+        with pytest.raises(ValueError):
+            FeedbackService.update_auto_run(run["id"], branch="nope")
+    finally:
+        FeedbackService.update_auto_run(run["id"], stage="rejected")
+
+    # Finished run: submission visible again unless an event excludes it.
+    assert FeedbackService.get_inflight_auto_run() is None
+    assert first in _ids(FeedbackService.get_actionable_feedback())
