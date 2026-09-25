@@ -91,3 +91,10 @@ Open questions: Whether the feedback should be treated as a bug fix or new capab
 - “Pick the oldest unfinished feedback and plan the next task.”
 - “Look for the oldest not-done item and tell me what to do next.”
 - “We’re idle; decide the next work item from project feedback.”
+
+## Autonomous runner mode
+
+Applies **only** when invoked from an `AUTONOMOUS RUNNER RUN` (see `openspec-leader`). The feedback item
+is given in `.auto/input.json`, not fetched from the database, and `ask.py` is not available. Do not
+draft clarification questions in this mode; if the feedback is ambiguous, choose the most reasonable
+reading, state it explicitly as an assumption in the proposal, and proceed.

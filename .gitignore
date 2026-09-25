@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Autonomous feedback runner (runner/): per-workspace I/O and self-test canary
+.auto/
+.auto-canary

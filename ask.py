@@ -1,6 +1,6 @@
 """Planner CLI for feedback clarifications.
 
-    python ask.py next
+    python ask.py next [--user <telegram_user_id>]
     python ask.py draft <submission_id> --question "…" --option "…" --option "…" [--yes]
     python ask.py resend-preview <submission_id>
 
@@ -38,7 +38,8 @@ async def _send(coro_factory) -> None:
 
 
 def cmd_next(args) -> int:
-    print(json.dumps(FeedbackService.get_actionable_feedback(), default=str, ensure_ascii=False, indent=2))
+    queue = FeedbackService.get_actionable_feedback(user_id=args.user)
+    print(json.dumps(queue, default=str, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -72,6 +73,7 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_next = sub.add_parser("next", help="Print the actionable feedback queue as JSON")
+    p_next.add_argument("--user", type=int, help="Only list feedback from this Telegram user id")
     p_next.set_defaults(func=cmd_next)
 
     p_draft = sub.add_parser("draft", help="Draft the one clarifying question for a submission")

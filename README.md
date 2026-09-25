@@ -130,6 +130,63 @@ python ask.py resend-preview <submission_id>         # if the admin preview fail
 
 Add `--yes` to `draft` to skip admin approval and send directly.
 
+## Autonomous Feedback Runner
+
+`runner/` plans and implements **the admin's own feedback** unattended. Nothing reaches `main` without
+the admin tapping ✅ in Telegram.
+
+```
+launchd (hourly) ─▶ runner/run.sh
+   ├─ pending ✅/❌/💬?  → merge / reject / rebuild          (checked every hour)
+   └─ new admin feedback? (at most every 5h)
+        ├─ clone ~/github/SEB-<id> (branch auto/<id>)
+        ├─ self-test: sandbox must block secrets, writes, network   (fails closed)
+        ├─ PLAN agent  → OpenSpec change        → 📋 notice
+        ├─ BUILD agent → code + tests           → sandboxed pytest
+        └─ 🔀 merge request  [✅ Merge] [❌ Reject] [💬 Changes]
+✅ → merge into main, archive + sync specs, resolve feedback, pip install, restart bot
+```
+
+Agents run with `claude -p` under `runner/settings.template.json`: no access to the main checkout,
+`~/.seb-runner` (token), `~/.ssh`; network limited to PyPI; commands cannot escape the sandbox. The
+agent has **no database access** (the local Postgres uses `trust` auth, so any access would be an escape):
+database tests skip in the sandbox and run in full against a throwaway database after ✅, before merging.
+The runner itself never executes unapproved agent-written code or git config outside the sandbox.
+
+### Setup (once)
+
+```bash
+runner/setup.sh store-token        # after `claude setup-token`, copy the token, then run this (never paste it)
+runner/setup.sh selftest           # must print SELFTEST PASSED
+runner/setup.sh install-agents     # stop any hand-started bot.py first; the bot now runs under launchd
+```
+
+Optional overrides live in `~/.seb-runner/config.env` (e.g. `THROTTLE_HOURS`, `BUILD_BUDGET_USD`,
+`PLAN_TIMEOUT_S`). Logs: `~/.seb-runner/logs/` (`runner.log`, `bot.out.log`, `bot.err.log`).
+
+### Checking the self-test catches mistakes
+
+To confirm the self-test detects a broken rule, edit `~/.seb-runner/runner-settings.json`, run
+`python -m runner.selftest` (expect `SELFTEST FAILED`), then restore it with
+`runner/setup.sh render-settings`. **Only do this while the runner is stopped**
+(`launchctl bootout gui/$(id -u)/com.seb.runner`) — a running agent uses the same settings file.
+
+### Reviewing a merge request
+
+The 🔀 message includes a command like `git -C <main> diff main...refs/runner/<id>` — the branch is
+already fetched into the main checkout for review.
+
+### Cost
+
+Idle hours start no Claude session. A real run costs one self-test (~$0.05), the PLAN and BUILD runs
+(capped by `PLAN_BUDGET_USD` / `BUILD_BUDGET_USD`, defaults $2 / $8) and one sandboxed test run (~$0.05).
+
+### Rollback
+
+```bash
+runner/setup.sh uninstall-agents   # then start bot.py by hand again
+```
+
 ## Troubleshooting
 
 **Connection refused error:**

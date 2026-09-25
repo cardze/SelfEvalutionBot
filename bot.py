@@ -35,6 +35,8 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+# httpx logs every request URL at INFO, and Telegram URLs contain the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Initialize storage service
 feedback_service = FeedbackService()
@@ -315,6 +317,84 @@ async def clarification_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     raise ApplicationHandlerStop
 
 
+RUN_DECISIONS = {"m": "merge", "r": "reject"}
+RUN_NOTE_PROMPT_TEXT = "Reply to this message with the changes you want."
+
+
+async def runner_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin taps ✅ Merge / ❌ Reject / 💬 Request changes on an autonomous-runner message."""
+    query = update.callback_query
+    try:
+        admin_id = get_admin_user_id()
+    except RuntimeError as exc:
+        logger.warning("Ignoring runner decision: %s", exc)
+        await query.answer()
+        return
+    parsed = _parse_callback(query.data)
+    if query.from_user.id != admin_id or parsed is None:
+        await query.answer()
+        return
+    run_id, action = parsed
+
+    if action in RUN_DECISIONS:
+        applied = await asyncio.to_thread(
+            FeedbackService.set_auto_run_decision, run_id, RUN_DECISIONS[action]
+        )
+        await query.answer(
+            "Queued; the runner acts within an hour." if applied else "This run is not awaiting a decision."
+        )
+        if applied:
+            await query.edit_message_reply_markup(reply_markup=None)
+    elif action == "c":
+        run = await asyncio.to_thread(FeedbackService.get_auto_run, run_id)
+        if run is None or run["stage"] not in ("awaiting_decision", "failed"):
+            await query.answer("This run is not awaiting a decision.")
+            return
+        await query.answer()
+        prompt = await context.bot.send_message(
+            chat_id=admin_id,
+            text=RUN_NOTE_PROMPT_TEXT,
+            reply_markup=ForceReply(input_field_placeholder="What should change?"),
+        )
+        await asyncio.to_thread(
+            FeedbackService.update_auto_run, run_id, note_prompt_message_id=prompt.message_id
+        )
+    else:
+        await query.answer()
+
+
+async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Capture the admin's "request changes" note sent as a reply to the runner's ForceReply prompt.
+
+    Runs in handler group -2 (before clarification replies in -1 and /feedback in 0).
+    Stops propagation only when the message matched a runner note prompt.
+    """
+    message = update.message
+    if message is None or message.reply_to_message is None:
+        return
+    try:
+        admin_id = get_admin_user_id()
+    except RuntimeError:
+        return
+    if update.effective_user.id != admin_id:
+        return
+    run = await asyncio.to_thread(
+        FeedbackService.find_auto_run_by_note_prompt, message.reply_to_message.message_id
+    )
+    if run is None:
+        return
+    applied = await asyncio.to_thread(
+        FeedbackService.set_auto_run_decision, run["id"], "changes", message.text
+    )
+    await message.reply_text(
+        "Noted. The runner will rebuild with your changes within an hour."
+        if applied
+        else "This run is no longer awaiting a decision."
+    )
+    raise ApplicationHandlerStop
+
+
 def main() -> None:
     # Initialize database before setting up bot
     try:
@@ -348,6 +428,12 @@ def main() -> None:
         MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, clarification_reply),
         group=-1,
     )
+    # Runner "request changes" notes are checked first; unmatched replies fall through.
+    application.add_handler(
+        MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, runner_note_reply),
+        group=-2,
+    )
+    application.add_handler(CallbackQueryHandler(runner_decision, pattern=r"^run:"))
     application.add_handler(CallbackQueryHandler(clarification_approval, pattern=r"^apv:"))
     application.add_handler(CallbackQueryHandler(clarification_answer, pattern=r"^clr:"))
     application.add_handler(CommandHandler("start", start))
