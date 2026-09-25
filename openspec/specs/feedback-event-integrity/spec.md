@@ -7,11 +7,16 @@ Define the allowed feedback event types, including `resolved` as the done marker
 The system SHALL accept only these values for `feedback_events.event_type`:
 - `started`, `cancelled`, `submitted`, `resolved`
 - `clarification_requested`, `clarified`
+- `wont_do`
 
 The column SHALL hold at least 50 characters.
 
 #### Scenario: Known event type
 - **WHEN** an event with type `clarification_requested` is recorded
+- **THEN** it is stored successfully
+
+#### Scenario: Won't-do event
+- **WHEN** an event with type `wont_do` is recorded for a submission
 - **THEN** it is stored successfully
 
 #### Scenario: Unknown event type rejected in Python
