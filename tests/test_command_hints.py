@@ -35,7 +35,26 @@ def test_help_lists_all_commands_and_mentions_slash_hint():
     assert "/help" in message
     assert "/feedback" in message
     assert "/cancel" in message
+    assert "/remind" in message
+    assert "/reminders" in message
     assert "type /" in message.lower()
+
+
+def test_setup_bot_commands_registers_remind_and_reminders():
+    calls = []
+
+    class RecordingBot:
+        async def set_my_commands(self, commands):
+            calls.append(commands)
+
+    class RecordingApplication:
+        def __init__(self):
+            self.bot = RecordingBot()
+
+    asyncio.run(bot.setup_bot_commands(RecordingApplication()))
+    names = [c.command for c in calls[0]]
+    assert "remind" in names
+    assert "reminders" in names
 
 
 import telegram
