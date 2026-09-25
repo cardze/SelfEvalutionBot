@@ -9,6 +9,7 @@ A Telegram bot that evolves by users' feedback.
   1. **What bug or current feature didn't meet your expectation.**
   2. **The way you suggest to fix the bug or create a new feature.**
 - `/cancel` — Cancel an in-progress feedback session.
+- `/remind` / `/reminders` — Schedule a one-time reminder or a repeating notice; see below.
 
 ## Database Setup (Local Development)
 
@@ -129,6 +130,38 @@ python ask.py resend-preview <submission_id>         # if the admin preview fail
 ```
 
 Add `--yes` to `draft` to skip admin approval and send directly.
+
+## Reminders and Notices
+
+`/remind` lets a user schedule a one-time reminder for a specific future time, or a
+repeating notice on a fixed interval. `/reminders` lists and cancels them.
+
+```
+/remind in 10m Take the bread out      # one-time, 10 minutes from now
+/remind in 2h Check the oven           # one-time, 2 hours from now
+/remind in 3d Renew the passport       # one-time, 3 days from now
+/remind at 14:30 Call the dentist      # one-time, today if 14:30 hasn't passed, else tomorrow
+/remind every 1h Drink water           # repeating, every hour until cancelled
+/remind every 30m Stretch              # repeating, every 30 minutes
+/remind every 1d Log your mood         # repeating, once a day
+
+/reminders                             # list your active reminders and notices
+/reminders cancel <id>                 # cancel one you own (id shown by /reminders)
+```
+
+Accepted `<when>` forms: `in <n>m|h|d` (relative one-time), `at HH:MM` (absolute
+one-time, 24-hour clock), `every <n>m|h|d` (repeating). Units are `m` (minutes),
+`h` (hours), `d` (days).
+
+- **Timezone**: all reminder times are interpreted and stored in **UTC**, not the
+  host's local time or the submitter's timezone. This is a known limitation for
+  this first version (see `openspec/changes/add-reminder-notifications/design.md`).
+- **Minimum repeat interval**: repeating notices must be at least **60 seconds**
+  apart; shorter intervals are rejected with an error at creation time.
+- **Delivery**: a background loop polls for due reminders roughly every 30 seconds,
+  so delivery can be up to ~30 seconds after the scheduled time, not to-the-second.
+- One-time reminders fire once and are then marked inactive. Repeating notices keep
+  firing at their interval until cancelled via `/reminders cancel <id>`.
 
 ## Autonomous Feedback Runner
 

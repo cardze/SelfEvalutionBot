@@ -83,7 +83,10 @@ def init_database():
     
     # Initialize schema
     _init_schema(config)
-    
+
+    # Fail-fast: confirm the reminders table (add-reminder-notifications) is queryable.
+    _verify_reminders_table(config)
+
     # Create connection pool (optional, for future use)
     # For now we'll just verify single connection works
     logger.info("✓ Database initialization complete")
@@ -118,6 +121,27 @@ def _init_schema(config):
         logger.info("✓ Database schema initialized")
     except Exception as e:
         raise Exception(f"❌ Failed to initialize database schema: {str(e)}") from e
+
+
+def _verify_reminders_table(config):
+    """Fail fast at startup if the reminders table is missing/unqueryable."""
+    try:
+        conn = psycopg.connect(
+            host=config["host"],
+            port=config["port"],
+            dbname=config["dbname"],
+            user=config["user"],
+            password=config["password"],
+            connect_timeout=5,
+        )
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM reminders LIMIT 1")
+        logger.info("✓ reminders table is queryable")
+    except Exception as e:
+        raise Exception(
+            "❌ Failed to query the reminders table after schema init: " + str(e)
+        ) from e
 
 
 def get_connection():

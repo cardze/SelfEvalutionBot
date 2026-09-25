@@ -26,6 +26,8 @@ from clarify import (
     get_admin_user_id,
     record_answer,
 )
+import reminders
+from reminders import ReminderParseError, ReminderService
 from dotenv import load_dotenv
 load_dotenv()
 import db
@@ -74,6 +76,8 @@ async def setup_bot_commands(application: Application) -> None:
                 BotCommand("start", "Start here and type / for command suggestions"),
                 BotCommand("feedback", "Share feedback with the bot"),
                 BotCommand("calc", "Evaluate an arithmetic expression, e.g. /calc 2 + 3"),
+                BotCommand("remind", "Schedule a reminder or repeating notice"),
+                BotCommand("reminders", "List or cancel your reminders"),
                 BotCommand("cancel", "Cancel the current feedback flow"),
                 BotCommand("help", "Show the command list and tips"),
             ]
@@ -100,7 +104,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
         "/calc - Evaluate an arithmetic expression (e.g. /calc 2 + 3)\n"
+        "/remind - Schedule a reminder or repeating notice (e.g. /remind in 10m Take the bread out)\n"
+        "/reminders - List your reminders, or /reminders cancel <id>\n"
         "/cancel - Cancel the current feedback flow\n\n"
+        "Reminder times are interpreted in UTC. Minimum repeat interval is "
+        + str(reminders.MIN_INTERVAL_SECONDS) + " seconds.\n"
         "Tip: type / in Telegram to see the built-in command suggestions."
     )
 
@@ -121,6 +129,94 @@ async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Error: division by zero")
     except Exception:
         await update.message.reply_text("Invalid expression. Example: /calc 2 + 3")
+
+
+async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text(reminders.USAGE)
+        return
+
+    args = context.args
+    when_parts = []
+    idx = 0
+    keyword = args[0].lower()
+    if keyword in ("in", "at", "every") and len(args) >= 2:
+        when_parts = [args[0], args[1]]
+        idx = 2
+    else:
+        await update.message.reply_text(reminders.USAGE)
+        return
+
+    message_text = " ".join(args[idx:]).strip()
+    if not message_text:
+        await update.message.reply_text(reminders.USAGE)
+        return
+
+    when = " ".join(when_parts)
+    try:
+        next_fire_at, is_recurring, interval_seconds = reminders.parse_when(when)
+    except ReminderParseError as exc:
+        await update.message.reply_text(str(exc))
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    row = await asyncio.to_thread(
+        ReminderService.create_reminder,
+        user.id,
+        chat_id,
+        message_text,
+        next_fire_at,
+        is_recurring,
+        interval_seconds,
+    )
+    if row is None:
+        await update.message.reply_text("Sorry, I could not save that reminder. Please try again.")
+        return
+
+    when_text = next_fire_at.strftime("%Y-%m-%d %H:%M UTC")
+    if is_recurring:
+        await update.message.reply_text(
+            "Repeating notice scheduled every " + str(interval_seconds)
+            + "s. First occurrence: " + when_text + ". (id " + str(row["id"]) + ")"
+        )
+    else:
+        await update.message.reply_text(
+            "Reminder scheduled for " + when_text + ". (id " + str(row["id"]) + ")"
+        )
+
+
+async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    args = context.args or []
+
+    if args and args[0].lower() == "cancel":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /reminders cancel <id>")
+            return
+        try:
+            reminder_id = UUID(args[1])
+        except ValueError:
+            await update.message.reply_text("That does not look like a valid reminder id.")
+            return
+        cancelled = await asyncio.to_thread(ReminderService.cancel, user.id, reminder_id)
+        if cancelled:
+            await update.message.reply_text("Reminder cancelled.")
+        else:
+            await update.message.reply_text(
+                "No active reminder with that id belongs to you."
+            )
+        return
+
+    rows = await asyncio.to_thread(ReminderService.list_active, user.id)
+    if not rows:
+        await update.message.reply_text("You have no active reminders.")
+        return
+
+    lines = [reminders.format_reminder_line(row) for row in rows]
+    await update.message.reply_text(
+        "Your active reminders:\n" + "\n".join(lines)
+    )
 
 
 async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -395,6 +491,11 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     raise ApplicationHandlerStop
 
 
+async def _post_init(application: Application) -> None:
+    """Start the reminder delivery loop on PTB's running event loop (see design D1)."""
+    asyncio.create_task(reminders.delivery_loop(application.bot))
+
+
 def main() -> None:
     # Initialize database before setting up bot
     try:
@@ -407,7 +508,7 @@ def main() -> None:
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
-    application = Application.builder().token(token).build()
+    application = Application.builder().token(token).post_init(_post_init).build()
 
     try:
         try:
@@ -439,6 +540,8 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("calc", calc))
+    application.add_handler(CommandHandler("remind", remind))
+    application.add_handler(CommandHandler("reminders", reminders_command))
 
     feedback_handler = ConversationHandler(
         entry_points=[CommandHandler("feedback", feedback_start)],

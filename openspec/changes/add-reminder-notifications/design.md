@@ -17,7 +17,7 @@ The feedback that drove this change was clarified and answered "Option 1 and 2":
 - No natural-language time parsing beyond a small, well-defined set of formats (see Decisions) — full NLP date parsing is out of scope.
 - No admin-facing reminder dashboard or cross-user visibility; a user can only see/cancel their own reminders.
 - No new scheduler dependency (e.g. APScheduler/Celery); delivery uses a simple polling loop (see Decision below).
-- No timezone-per-user configuration; all times are interpreted in a single fixed timezone (server default, documented as UTC) for this first version.
+- No timezone-per-user configuration; all reminder times SHALL be computed and stored in UTC (`datetime.now(timezone.utc)`), not the host's local/server-default timezone, for this first version.
 
 ## Decisions
 
@@ -48,7 +48,7 @@ Following the calculator's security precedent (AST-allowlist, no `eval`/`exec`),
 - [Polling granularity means reminders can fire up to ~30s late] → Acceptable for "remind me" use cases; documented in the spec's scenarios as "delivered within the polling interval," not to-the-second precision.
 - [Single fixed timezone may confuse users in other timezones] → Documented explicitly as a non-goal/known limitation for this version; `/remind` help text states times are interpreted in the server's timezone.
 - [In-process polling loop dies silently if the bot process crashes] → It restarts with the bot process (same supervision as the rest of the bot, per `bot-supervision` capability); no additional recovery logic needed since `next_fire_at` is durable in PostgreSQL and survives restarts.
-- [Repeating notices with a very short interval could spam a user or hammer the DB] → Mitigated by validating a minimum interval (proposed: 60 seconds) at creation time, rejected with a clear error otherwise.
+- [Repeating notices with a very short interval could spam a user or hammer the DB] → Mitigated by validating a minimum interval of 60 seconds (enforced in both `reminders.py` parsing and the `reminders` table CHECK constraint) at creation time, rejected with a clear error otherwise.
 
 ## Migration Plan
 

@@ -89,3 +89,29 @@ CREATE TABLE IF NOT EXISTS auto_runs (
 -- At most one run in flight
 CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_runs_single_flight
     ON auto_runs ((true)) WHERE stage NOT IN ('merged', 'rejected');
+
+-- One-time reminders and repeating notices (see reminders.py)
+CREATE TABLE IF NOT EXISTS reminders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    message_text TEXT NOT NULL,
+    is_recurring BOOLEAN NOT NULL DEFAULT false,
+    interval_seconds INT,
+    next_fire_at TIMESTAMPTZ NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Delivery loop's poll query: active rows due at or before now
+CREATE INDEX IF NOT EXISTS idx_reminders_active_next_fire_at
+    ON reminders(active, next_fire_at);
+
+-- Recurring reminders must carry a minimum-60s interval; one-time reminders have none.
+-- Minimum must match reminders.MIN_INTERVAL_SECONDS (enforced by tests/test_reminders_schema.py).
+ALTER TABLE reminders DROP CONSTRAINT IF EXISTS reminders_interval_seconds_check;
+ALTER TABLE reminders ADD CONSTRAINT reminders_interval_seconds_check
+    CHECK (
+        (is_recurring = false AND interval_seconds IS NULL)
+        OR (is_recurring = true AND interval_seconds >= 60)
+    );
