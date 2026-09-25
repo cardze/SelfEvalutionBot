@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 
 import bot
-from reminders import ReminderService
+from reminders import ReminderLimitExceededError, ReminderService
 
 USER_ID = 777
 CHAT_ID = 888
@@ -199,3 +199,18 @@ def test_reminders_cancel_invalid_id_shows_error_not_crash(store):
     replies = _run(bot.reminders_command, update, context)
     assert "valid reminder id" in replies[-1].lower()
     assert store.calls == []
+
+
+def test_remind_at_cap_shows_distinct_limit_error(store, monkeypatch):
+    def create_reminder_at_cap(user_id, chat_id, message_text, next_fire_at, is_recurring, interval_seconds):
+        raise ReminderLimitExceededError(
+            "You already have 20 active reminders, which is the maximum allowed. "
+            "Cancel one with /reminders cancel <id> before adding another."
+        )
+
+    monkeypatch.setattr(ReminderService, "create_reminder", staticmethod(create_reminder_at_cap))
+
+    update, context = _update("in 10m One too many")
+    replies = _run(bot.remind, update, context)
+    assert "maximum" in replies[-1].lower()
+    assert "could not save" not in replies[-1].lower()

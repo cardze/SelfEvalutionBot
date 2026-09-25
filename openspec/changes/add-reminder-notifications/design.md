@@ -17,7 +17,7 @@ The feedback that drove this change was clarified and answered "Option 1 and 2":
 - No natural-language time parsing beyond a small, well-defined set of formats (see Decisions) — full NLP date parsing is out of scope.
 - No admin-facing reminder dashboard or cross-user visibility; a user can only see/cancel their own reminders.
 - No new scheduler dependency (e.g. APScheduler/Celery); delivery uses a simple polling loop (see Decision below).
-- No timezone-per-user configuration; all reminder times SHALL be computed and stored in UTC (`datetime.now(timezone.utc)`), not the host's local/server-default timezone, for this first version.
+- No timezone-per-user configuration; all reminder times are interpreted and displayed in a single fixed timezone, Asia/Taipei (UTC+8), for every user in this first version (updated per admin note; internal storage stays UTC, see D5).
 
 ## Decisions
 
@@ -43,10 +43,20 @@ One table with an `is_recurring boolean` flag and a nullable `interval_seconds` 
 ### D4: Parsing — small allowlisted grammar via `re`/`datetime`, no `eval`
 Following the calculator's security precedent (AST-allowlist, no `eval`/`exec`), time parsing uses a small regex-based grammar (`in \d+[mhd]`, `every \d+[mhd]`, `at HH:MM`) with explicit validation and a `ValueError`-driven "Usage: ..." message on anything that doesn't match — no dynamic evaluation of user input.
 
+### D5: Interpretation/display timezone: fixed Asia/Taipei (UTC+8)
+Per admin direction, `at HH:MM` in `/remind` is interpreted as a wall-clock time in Asia/Taipei (not UTC, not host-local), converted to UTC for storage (`next_fire_at` stays TIMESTAMPTZ in UTC, storage contract unchanged). `/reminders` and the `/remind` confirmation message render `next_fire_at` converted back to Asia/Taipei for display, using the standard-library `zoneinfo.ZoneInfo("Asia/Taipei")`. This is a single fixed timezone for all users (no per-user setting), consistent with the existing non-goal on per-user timezone configuration.
+- Alternative considered: keep `at HH:MM` and display in UTC (original design). Superseded by admin note: Asia/Taipei is clearer for the target user base.
+
+### D6: Per-user active reminder cap: 20
+To bound unbounded growth of a single users active reminders (and the resulting delivery-loop/list size), `ReminderService.create_reminder` counts the callers current active reminders and rejects creation once the caller already has 20 active reminders (one-time plus repeating combined), raising a dedicated `ReminderLimitExceededError`. `/remind` catches it and replies with a clear, distinct message (not the generic could-not-save failure).
+
+### D7: Maximum offset/interval: 365 days
+`in <n>m/h/d` and `every <n>m/h/d` both reject amounts whose total duration exceeds 365 days (31,536,000 seconds), with a clear error naming the limit. This bounds `next_fire_at`/`interval_seconds` to sane ranges. `at HH:MM` is unaffected since it always resolves to today or tomorrow.
+
 ## Risks / Trade-offs
 
 - [Polling granularity means reminders can fire up to ~30s late] → Acceptable for "remind me" use cases; documented in the spec's scenarios as "delivered within the polling interval," not to-the-second precision.
-- [Single fixed timezone may confuse users in other timezones] → Documented explicitly as a non-goal/known limitation for this version; `/remind` help text states times are interpreted in the server's timezone.
+- [Single fixed timezone may confuse users outside Asia/Taipei] to Documented explicitly as a non-goal/known limitation for this version; /remind help text and /help state times are interpreted and displayed in Asia/Taipei (UTC+8).
 - [In-process polling loop dies silently if the bot process crashes] → It restarts with the bot process (same supervision as the rest of the bot, per `bot-supervision` capability); no additional recovery logic needed since `next_fire_at` is durable in PostgreSQL and survives restarts.
 - [Repeating notices with a very short interval could spam a user or hammer the DB] → Mitigated by validating a minimum interval of 60 seconds (enforced in both `reminders.py` parsing and the `reminders` table CHECK constraint) at creation time, rejected with a clear error otherwise.
 

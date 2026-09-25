@@ -63,3 +63,35 @@ The bot SHALL let a user list their own active reminders and notices via `/remin
 #### Scenario: User cancels a reminder they do not own or that does not exist
 - **WHEN** a user sends `/reminders cancel <id>` for an id that does not exist or belongs to another user
 - **THEN** the bot replies with a clear error and does not modify any reminder
+### Requirement: Interpret and display reminder times in Asia/Taipei
+The bot SHALL interpret `at HH:MM` in `/remind` as a wall-clock time in the Asia/Taipei timezone (UTC+8), and SHALL display every reminder next-fire time (in `/remind` confirmations and `/reminders` listings) converted to Asia/Taipei, regardless of the timezone the underlying value is stored in.
+
+#### Scenario: Absolute time is interpreted as Asia/Taipei
+- WHEN a user sends `/remind at 09:00 Standup` and the current time in Asia/Taipei has not yet reached 09:00 today
+- THEN the bot schedules the reminder for 09:00 Asia/Taipei time today and confirms using an Asia/Taipei-labeled time
+
+#### Scenario: Listing shows Asia/Taipei times
+- WHEN a user sends `/reminders` and has at least one active reminder
+- THEN each listed next-fire time is shown converted to Asia/Taipei, not UTC or another timezone
+
+### Requirement: Cap active reminders per user
+The bot SHALL limit each user to at most 20 active reminders (one-time and repeating combined) and SHALL reject creating a new reminder that would exceed this cap with a clear error, without creating the reminder.
+
+#### Scenario: User is at the cap
+- WHEN a user who already has 20 active reminders sends a valid `/remind` command
+- THEN the bot replies that the maximum number of active reminders has been reached and does not create a new reminder
+
+#### Scenario: User is under the cap
+- WHEN a user with fewer than 20 active reminders sends a valid `/remind` command
+- THEN the bot creates the reminder as normal
+
+### Requirement: Reject offsets and intervals over 365 days
+The bot SHALL reject `/remind in <n>` and `/remind every <n>` expressions whose total duration exceeds 365 days, replying with a clear error naming the limit and not creating the reminder.
+
+#### Scenario: Relative offset over the maximum is rejected
+- WHEN a user sends `/remind in 400d Check the roof`
+- THEN the bot replies with an error stating the maximum allowed offset and does not create a reminder
+
+#### Scenario: Repeat interval over the maximum is rejected
+- WHEN a user sends `/remind every 400d Renew the lease`
+- THEN the bot replies with an error stating the maximum allowed interval and does not create the notice

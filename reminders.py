@@ -16,6 +16,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from psycopg.rows import dict_row
 
@@ -27,6 +28,19 @@ logger = logging.getLogger(__name__)
 # Must match the reminders_interval_seconds_check CHECK constraint in sql/init.sql
 # (enforced by tests/test_reminders_schema.py).
 MIN_INTERVAL_SECONDS = 60
+
+# Maximum allowed offset/interval for `in <n>` and `every <n>`, in seconds (365 days).
+# Bounds next_fire_at/interval_seconds to a sane range (design D7).
+MAX_OFFSET_SECONDS = 365 * 86400
+
+# Maximum number of active reminders (one-time and repeating combined) per user
+# (design D6). Enforced in ReminderService.create_reminder.
+MAX_ACTIVE_REMINDERS = 20
+
+# Fixed interpretation/display timezone for `at HH:MM` and all rendered next-fire
+# times (design D5). Internal storage of next_fire_at stays UTC; this is only used
+# for parsing the wall-clock HH:MM and for formatting output.
+REMINDER_DISPLAY_TZ = ZoneInfo("Asia/Taipei")
 
 _UNIT_SECONDS = dict(m=60, h=3600, d=86400)
 
@@ -41,13 +55,19 @@ USAGE = (
     "  /remind at 14:30 Call the dentist\n"
     "  /remind every 1h Drink water\n"
     "Accepted units: m (minutes), h (hours), d (days).\n"
-    "Times are interpreted in UTC. Minimum repeat interval is "
-    + str(MIN_INTERVAL_SECONDS) + " seconds."
+    "The `at HH:MM` time and all displayed times use Asia/Taipei (UTC+8). "
+    "Minimum repeat interval is " + str(MIN_INTERVAL_SECONDS) + " seconds; "
+    "maximum offset/interval is " + str(MAX_OFFSET_SECONDS // 86400) + " days. "
+    "Each user may have at most " + str(MAX_ACTIVE_REMINDERS) + " active reminders."
 )
 
 
 class ReminderParseError(ValueError):
     """Raised when a `<when>` expression cannot be parsed. Message is usage-style."""
+
+
+class ReminderLimitExceededError(Exception):
+    """Raised when a user already has MAX_ACTIVE_REMINDERS active reminders."""
 
 
 def parse_relative(when: str, now: Optional[datetime] = None) -> datetime:
@@ -62,25 +82,38 @@ def parse_relative(when: str, now: Optional[datetime] = None) -> datetime:
     amount, unit = int(match.group(1)), match.group(2).lower()
     if amount <= 0:
         raise ReminderParseError("Relative offset must be a positive number: " + repr(when) + ". " + USAGE)
+    offset_seconds = amount * _UNIT_SECONDS[unit]
+    if offset_seconds > MAX_OFFSET_SECONDS:
+        raise ReminderParseError(
+            "Maximum allowed offset is " + str(MAX_OFFSET_SECONDS // 86400)
+            + " days; got " + repr(when) + ". " + USAGE
+        )
     now = now or datetime.now(timezone.utc)
-    return now + timedelta(seconds=amount * _UNIT_SECONDS[unit])
+    return now + timedelta(seconds=offset_seconds)
 
 
 def parse_absolute(when: str, now: Optional[datetime] = None) -> datetime:
-    """Parse `at HH:MM` into an absolute UTC datetime (today, or tomorrow if already passed).
+    """Parse `at HH:MM` into an absolute UTC datetime.
+
+    `HH:MM` is interpreted as a wall-clock time in Asia/Taipei (design D5): the
+    candidate is built in Asia/Taipei, rolled to tomorrow if already passed in
+    Asia/Taipei, then converted back to UTC before returning. `now`, if given,
+    must be UTC-aware (existing contract); the returned datetime is always
+    UTC-aware (storage stays UTC).
 
     Raises:
-        ReminderParseError: if `when` doesn't match the expected grammar.
+        ReminderParseError: if `when` does not match the expected grammar.
     """
     match = _ABSOLUTE_RE.match(when.strip())
     if not match:
         raise ReminderParseError("Could not understand the time expression: " + repr(when) + ". " + USAGE)
     hour, minute = int(match.group(1)), int(match.group(2))
     now = now or datetime.now(timezone.utc)
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    return candidate
+    now_taipei = now.astimezone(REMINDER_DISPLAY_TZ)
+    candidate_taipei = now_taipei.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate_taipei <= now_taipei:
+        candidate_taipei += timedelta(days=1)
+    return candidate_taipei.astimezone(timezone.utc)
 
 
 def parse_interval(when: str) -> int:
@@ -99,6 +132,11 @@ def parse_interval(when: str) -> int:
         raise ReminderParseError(
             "Minimum repeat interval is " + str(MIN_INTERVAL_SECONDS)
             + " seconds; got " + str(interval_seconds) + "s. " + USAGE
+        )
+    if interval_seconds > MAX_OFFSET_SECONDS:
+        raise ReminderParseError(
+            "Maximum allowed interval is " + str(MAX_OFFSET_SECONDS // 86400)
+            + " days; got " + repr(when) + ". " + USAGE
         )
     return interval_seconds
 
@@ -137,7 +175,21 @@ class ReminderService:
         is_recurring: bool,
         interval_seconds: Optional[int] = None,
     ) -> Optional[dict]:
-        """Insert a new reminder row. Returns the created row, or None on failure."""
+        """Insert a new reminder row. Returns the created row, or None on failure.
+
+        Raises:
+            ReminderLimitExceededError: if user_id already has MAX_ACTIVE_REMINDERS
+                active reminders. This check runs, and the error is raised, before
+                the insert is attempted and before the broad except below, so a
+                cap violation is never silently swallowed into a plain None return.
+        """
+        active_count = len(ReminderService.list_active(user_id))
+        if active_count >= MAX_ACTIVE_REMINDERS:
+            raise ReminderLimitExceededError(
+                "You already have " + str(MAX_ACTIVE_REMINDERS)
+                + " active reminders, which is the maximum allowed. Cancel one with "
+                "/reminders cancel <id> before adding another."
+            )
         try:
             conn = get_connection()
             with closing(conn):
@@ -239,13 +291,22 @@ class ReminderService:
         return applied
 
 
+def format_datetime_taipei(dt: datetime) -> str:
+    """Render a UTC-aware datetime as its Asia/Taipei wall-clock time (design D5).
+
+    Shared by format_reminder_line and bot.py's /remind confirmation so both
+    display the same Asia/Taipei-converted text via one implementation.
+    """
+    return dt.astimezone(REMINDER_DISPLAY_TZ).strftime("%Y-%m-%d %H:%M Asia/Taipei")
+
+
 def format_reminder_line(row: dict) -> str:
     """Render a single /reminders list entry."""
     if row["is_recurring"]:
         recurring = "every " + str(row["interval_seconds"]) + "s"
     else:
         recurring = "one-time"
-    when = row["next_fire_at"].strftime("%Y-%m-%d %H:%M UTC")
+    when = format_datetime_taipei(row["next_fire_at"])
     reminder_id = row["id"]
     message_text = row["message_text"]
     return "#" + str(reminder_id) + " - " + message_text + " (" + recurring + ", next: " + when + ")"

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import db
-from reminders import ReminderService
+from reminders import MAX_ACTIVE_REMINDERS, ReminderLimitExceededError, ReminderService
 
 TEST_USER_ID = -535353
 OTHER_USER_ID = -535354
@@ -136,3 +136,41 @@ def test_mark_delivered_deactivates_one_time_reminder(clean):
     )
     assert ReminderService.mark_delivered(row["id"]) is True
     assert ReminderService.list_active(TEST_USER_ID) == []
+
+
+def test_create_reminder_enforces_active_cap(clean):
+    now = _now()
+    for i in range(MAX_ACTIVE_REMINDERS):
+        row = ReminderService.create_reminder(
+            TEST_USER_ID, TEST_USER_ID, "reminder " + str(i), now + timedelta(minutes=i + 1), False, None
+        )
+        assert row is not None
+
+    assert len(ReminderService.list_active(TEST_USER_ID)) == MAX_ACTIVE_REMINDERS
+
+    with pytest.raises(ReminderLimitExceededError):
+        ReminderService.create_reminder(
+            TEST_USER_ID, TEST_USER_ID, "one too many", now + timedelta(hours=1), False, None
+        )
+
+    # Cancelling one active reminder frees a slot for another creation.
+    active = ReminderService.list_active(TEST_USER_ID)
+    ReminderService.cancel(TEST_USER_ID, active[0]["id"])
+    freed_row = ReminderService.create_reminder(
+        TEST_USER_ID, TEST_USER_ID, "fits after cancel", now + timedelta(hours=1), False, None
+    )
+    assert freed_row is not None
+
+
+def test_create_reminder_cap_is_per_user(clean):
+    now = _now()
+    for i in range(MAX_ACTIVE_REMINDERS):
+        assert ReminderService.create_reminder(
+            TEST_USER_ID, TEST_USER_ID, "reminder " + str(i), now + timedelta(minutes=i + 1), False, None
+        ) is not None
+
+    # OTHER_USER_ID has an independent cap; not affected by TEST_USER_ID being at the limit.
+    other_row = ReminderService.create_reminder(
+        OTHER_USER_ID, OTHER_USER_ID, "not capped", now + timedelta(minutes=1), False, None
+    )
+    assert other_row is not None

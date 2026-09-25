@@ -27,7 +27,7 @@ from clarify import (
     record_answer,
 )
 import reminders
-from reminders import ReminderParseError, ReminderService
+from reminders import ReminderLimitExceededError, ReminderParseError, ReminderService
 from dotenv import load_dotenv
 load_dotenv()
 import db
@@ -107,8 +107,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/remind - Schedule a reminder or repeating notice (e.g. /remind in 10m Take the bread out)\n"
         "/reminders - List your reminders, or /reminders cancel <id>\n"
         "/cancel - Cancel the current feedback flow\n\n"
-        "Reminder times are interpreted in UTC. Minimum repeat interval is "
-        + str(reminders.MIN_INTERVAL_SECONDS) + " seconds.\n"
+        "Reminder times use Asia/Taipei (UTC+8). Minimum repeat interval is "
+        + str(reminders.MIN_INTERVAL_SECONDS) + " seconds, maximum is "
+        + str(reminders.MAX_OFFSET_SECONDS // 86400) + " days. Each user may have "
+        "at most " + str(reminders.MAX_ACTIVE_REMINDERS) + " active reminders.\n"
         "Tip: type / in Telegram to see the built-in command suggestions."
     )
 
@@ -161,20 +163,24 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     user = update.effective_user
     chat_id = update.effective_chat.id
-    row = await asyncio.to_thread(
-        ReminderService.create_reminder,
-        user.id,
-        chat_id,
-        message_text,
-        next_fire_at,
-        is_recurring,
-        interval_seconds,
-    )
+    try:
+        row = await asyncio.to_thread(
+            ReminderService.create_reminder,
+            user.id,
+            chat_id,
+            message_text,
+            next_fire_at,
+            is_recurring,
+            interval_seconds,
+        )
+    except ReminderLimitExceededError as exc:
+        await update.message.reply_text(str(exc))
+        return
     if row is None:
         await update.message.reply_text("Sorry, I could not save that reminder. Please try again.")
         return
 
-    when_text = next_fire_at.strftime("%Y-%m-%d %H:%M UTC")
+    when_text = reminders.format_datetime_taipei(next_fire_at)
     if is_recurring:
         await update.message.reply_text(
             "Repeating notice scheduled every " + str(interval_seconds)
