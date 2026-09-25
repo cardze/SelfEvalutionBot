@@ -14,6 +14,8 @@ from telegram.ext import (
     ContextTypes,
 )
 from storage import FeedbackService
+from dotenv import load_dotenv
+load_dotenv()
 import db
 
 logging.basicConfig(
