@@ -18,7 +18,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_submissions_user_id
 CREATE TABLE IF NOT EXISTS feedback_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id BIGINT NOT NULL,
-    event_type VARCHAR(20) NOT NULL,  -- 'started', 'cancelled', 'submitted', 'resolved'
+    event_type VARCHAR(50) NOT NULL,  -- see feedback_events_event_type_check below
     feedback_submission_id UUID REFERENCES feedback_submissions(id) ON DELETE SET NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -30,3 +30,37 @@ CREATE INDEX IF NOT EXISTS idx_feedback_events_user_id
 -- Create index on feedback_submission_id for linking
 CREATE INDEX IF NOT EXISTS idx_feedback_events_submission_id 
     ON feedback_events(feedback_submission_id);
+
+-- Widen event_type on databases created before VARCHAR(50) (no-op if already wide)
+ALTER TABLE feedback_events ALTER COLUMN event_type TYPE VARCHAR(50);
+
+-- Allowed event types; keep in sync with storage.EVENT_TYPES (enforced by tests/test_event_types.py)
+ALTER TABLE feedback_events DROP CONSTRAINT IF EXISTS feedback_events_event_type_check;
+ALTER TABLE feedback_events ADD CONSTRAINT feedback_events_event_type_check
+    CHECK (event_type IN ('started', 'cancelled', 'submitted', 'resolved',
+                          'clarification_requested', 'clarified'));
+
+-- One clarifying question per feedback submission
+CREATE TABLE IF NOT EXISTS feedback_clarifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    feedback_submission_id UUID NOT NULL UNIQUE
+        REFERENCES feedback_submissions(id) ON DELETE CASCADE,
+    question TEXT NOT NULL,
+    options JSONB NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending_approval'
+        CHECK (status IN ('pending_approval', 'sent', 'answered', 'discarded')),
+    answer_text TEXT,
+    answer_source VARCHAR(20) CHECK (answer_source IN ('option', 'free_text')),
+    admin_message_id BIGINT,
+    question_message_id BIGINT,
+    reply_prompt_message_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at TIMESTAMPTZ,
+    answered_at TIMESTAMPTZ,
+    CHECK (status NOT IN ('sent', 'answered') OR sent_at IS NOT NULL),
+    CHECK (status <> 'answered'
+           OR (answered_at IS NOT NULL AND answer_text IS NOT NULL AND answer_source IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_clarifications_reply_prompt
+    ON feedback_clarifications(reply_prompt_message_id);

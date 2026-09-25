@@ -51,25 +51,18 @@ This bot requires PostgreSQL to store feedback submissions and conversation even
 
 2. **Configure environment variables**
 
-   Create a `.env` file in the project root (or set these in your shell):
+   Copy `.env.example` to `.env` in the project root and fill in the values.
+   `bot.py` and `ask.py` load `.env` automatically, so no manual `export` is needed
+   (variables already set in your shell take precedence):
    ```bash
-   # .env (example - never commit with real values)
+   # .env (never commit with real values)
    TELEGRAM_BOT_TOKEN="your-bot-token-here"
+   ADMIN_USER_ID=123456789
    POSTGRES_HOST=localhost
    POSTGRES_PORT=5432
    POSTGRES_DB=feedback_bot
    POSTGRES_USER=postgres
    POSTGRES_PASSWORD=postgres
-   ```
-
-   **Export environment variables:**
-   ```bash
-   export TELEGRAM_BOT_TOKEN="your-token-here"
-   export POSTGRES_HOST="localhost"
-   export POSTGRES_PORT="5432"
-   export POSTGRES_DB="feedback_bot"
-   export POSTGRES_USER="postgres"
-   export POSTGRES_PASSWORD="postgres"
    ```
 
 3. **Run the bot**
@@ -86,6 +79,7 @@ This bot requires PostgreSQL to store feedback submissions and conversation even
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | — | ✓ | Your Telegram bot token from BotFather |
+| `ADMIN_USER_ID` | — | for clarifications | Telegram user id that approves clarification questions. The admin must `/start` the bot once. |
 | `POSTGRES_HOST` | `localhost` | | PostgreSQL server hostname |
 | `POSTGRES_PORT` | `5432` | | PostgreSQL server port |
 | `POSTGRES_DB` | `feedback_bot` | | Database name |
@@ -105,6 +99,36 @@ The bot will:
 2. Initialize database schema (idempotent)
 3. Start polling for Telegram messages
 4. Store all feedback submissions and events in the database
+
+## Feedback Clarifications
+
+When feedback is ambiguous, the planner agent can ask the submitter **one** clarifying question.
+
+```
+planner ──▶ python ask.py draft … ──▶ preview to ADMIN_USER_ID  [✅ Send] [❌ Discard]
+                                             │ ✅
+                                             ▼
+                          submitter gets the question as buttons + "✏️ Something else"
+                                             │ tap or reply (any time)
+                                             ▼
+                          answer stored ──▶ submission back at the front of the queue
+```
+
+- A sent question **parks** the submission. There is no timer; an answer at any time reopens it.
+- ❌ Discard means "don't ask": the planner proceeds with a best-guess assumption.
+- Answers are stored in `feedback_clarifications`; the event log gets `clarification_requested` and `clarified`.
+
+CLI (used by the planner; see `.claude/skills/planner-fetch-feedback/SKILL.md`):
+
+```bash
+python ask.py next                                   # actionable queue as JSON
+python ask.py draft <submission_id> \
+    --question "About your idea \"…\": what did you mean?" \
+    --option "Remind me at a time I set" --option "Recurring notice"
+python ask.py resend-preview <submission_id>         # if the admin preview failed to send
+```
+
+Add `--yes` to `draft` to skip admin approval and send directly.
 
 ## Troubleshooting
 
