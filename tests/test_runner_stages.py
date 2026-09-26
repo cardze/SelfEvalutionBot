@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import db
-from runner import agent, notify, selftest, snapshot, testdb, verify
+from runner import agent, notify, refs, selftest, snapshot, testdb, verify
 from runner import runner as rr
 from runner import workspace as ws
 from runner.config import Config
@@ -63,6 +63,7 @@ class Env:
         self.selftest_ok = True
         self.plan_output = True
         self.full_ok = True
+        self.commands = []         # every subprocess command run while faked
 
 
 @pytest.fixture
@@ -130,6 +131,7 @@ def env(tmp_path, monkeypatch):
     real_run = subprocess.run
 
     def fake_subprocess(cmd, *args, **kwargs):
+        e.commands.append(list(cmd))
         if cmd[0] == "openspec" and cmd[1] == "archive":
             name = cmd[2]
             src = config.main / "openspec/changes" / name
@@ -144,6 +146,8 @@ def env(tmp_path, monkeypatch):
     yield e
     run = FeedbackService.get_inflight_auto_run()
     _cleanup()  # cascades to auto_runs
+    # The runner never pushes anything anywhere (runner-review: review branches are never pushed).
+    assert not [c for c in e.commands if "push" in c], "runner invoked git push"
 
 
 def kinds(e):
@@ -287,3 +291,102 @@ def test_full_suite_failure_aborts_merge(env):
     assert "Merge runner change" not in subprocess.run(
         ["git", "-C", str(env.config.main), "log", "--oneline"], capture_output=True, text=True).stdout
     assert kinds(env)[-1] == "failure"
+
+
+# ---------- review branch (add-runner-review-branch) ----------
+
+
+def _rev(e, name):
+    return subprocess.run(["git", "-C", str(e.config.main), "rev-parse", "--verify", "-q", name],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_review_branch_matches_merge_request(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    assert _rev(env, "review/add-x") == _rev(env, refs.ref_name(sub)) != ""
+    assert "diff main...review/add-x" in env.notes[-1][1][6]
+
+
+def test_stale_review_branch_is_overwritten(env):
+    _git(env.config.main, "branch", "review/add-x", "main")
+    sub = new_submission()
+    rr.tick(env.config)
+    assert _rev(env, "review/add-x") == _rev(env, refs.ref_name(sub))
+
+
+def test_changes_path_moves_review_branch(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    first = _rev(env, "review/add-x")
+    run = run_row(sub)
+    FeedbackService.set_auto_run_decision(run["id"], "changes", "again")
+    env.verify_ok = False
+    assert rr.tick(env.config) == "retry"
+    assert _rev(env, "review/add-x") == ""          # dropped at BUILD start, not recreated
+    env.verify_ok = True
+    assert rr.tick(env.config) == "awaiting_decision"
+    second = _rev(env, "review/add-x")
+    assert second not in ("", first) and second == _rev(env, refs.ref_name(sub))
+
+
+def test_no_review_branch_when_build_fails(env):
+    env.verify_ok = False
+    new_submission()
+    rr.tick(env.config)
+    assert _rev(env, "review/add-x") == ""
+
+
+def test_merge_deletes_review_branch(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "merge")
+    assert rr.tick(env.config) == "merged"
+    assert _rev(env, "review/add-x") == "" and _rev(env, refs.ref_name(sub)) == ""
+
+
+def test_merge_abort_keeps_review_branch(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    before = _rev(env, "review/add-x")
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "merge")
+    env.full_ok = False
+    assert rr.tick(env.config) == "merge_aborted"
+    assert _rev(env, "review/add-x") == before != ""
+
+
+def test_reject_deletes_review_branch(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "reject")
+    assert rr.tick(env.config) == "rejected"
+    assert _rev(env, "review/add-x") == ""
+
+
+def test_reject_off_main_still_deletes_review_branch(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    _git(env.config.main, "checkout", "-q", "-b", "elsewhere")
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "reject")
+    assert rr.tick(env.config) == "rejected"
+    assert _rev(env, "review/add-x") == ""
+
+
+def test_reject_after_failed_plan(env):
+    env.plan_output = False
+    sub = new_submission()
+    assert rr.tick(env.config) == "failed"
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "reject")
+    assert rr.tick(env.config) == "rejected"
+
+
+def test_checked_out_review_branch_is_left_alone(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    before = _rev(env, "review/add-x")
+    _git(env.config.main, "checkout", "-q", "review/add-x")
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "changes", "again")
+    assert rr.tick(env.config) == "awaiting_decision"
+    assert _rev(env, "review/add-x") == before
+    warnings = [a[0] for k, a in env.notes if k == "warning"]
+    assert warnings and all("review/add-x is checked out" in w for w in warnings)

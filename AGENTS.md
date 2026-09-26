@@ -77,6 +77,28 @@ verification → 🔀 merge request (✅ Merge / ❌ Reject / 💬 Request chang
 - When an agent prompt begins with `AUTONOMOUS RUNNER RUN`, follow the "Autonomous runner mode"
   section of `openspec-leader` / `planner`.
 
+### Reviewing runner changes
+
+With every 🔀 merge request the runner points a local branch `review/<change-name>` in the main
+checkout at the exact commit under review. Review it **by diff only**:
+
+```
+git diff main...review/<change-name>
+git show review/<change-name>:path/to/file
+```
+
+- **Never check out a `review/*` branch in the main checkout.** launchd runs the bot and the runner
+  from the main checkout's working tree, so a checkout hands agent-written code the OAuth token, the
+  Telegram token and the database on the next hourly run or bot restart.
+- Never run git, tests, `.venv` binaries, an editor or Claude Code inside a `SEB-*` workspace or in a
+  worktree of a `review/*` branch. Their `.git/config`, `conftest.py`, `.claude/settings.json`,
+  `.vscode/` and `.envrc` are agent-controlled and would run outside the sandbox. This applies to
+  reviewing agents as well as people.
+- Read the ⚠️ sensitive-paths list in the 🔀 message closely: it flags edits to `runner/`,
+  `.claude/`, `.github/`, `AGENTS.md`, test and packaging config, and `requirements.txt`.
+- The `review/` namespace belongs to the runner: it overwrites and deletes those branches. Never
+  push them (avoid `git push --all` / `--mirror`).
+
 ---
 
 ## OpenSpec change structure
