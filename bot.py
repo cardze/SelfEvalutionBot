@@ -3,6 +3,7 @@ import asyncio
 import logging
 import operator
 import os
+import random
 from uuid import UUID
 from telegram import Update, BotCommand, ForceReply
 from telegram.helpers import escape_markdown
@@ -56,6 +57,19 @@ _BINOPS = {
 }
 _UNOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 
+DEFAULT_MEALS = (
+    "牛肉麵",
+    "滷肉飯",
+    "火鍋",
+    "壽司",
+    "義大利麵",
+    "漢堡",
+    "咖哩飯",
+    "炒飯",
+    "沙拉",
+    "拉麵",
+)
+
 
 def _eval_expr(node):
     if isinstance(node, ast.Expression):
@@ -76,6 +90,7 @@ async def setup_bot_commands(application: Application) -> None:
                 BotCommand("start", "Start here and type / for command suggestions"),
                 BotCommand("feedback", "Share feedback with the bot"),
                 BotCommand("calc", "Evaluate an arithmetic expression, e.g. /calc 2 + 3"),
+                BotCommand("meal", "Randomly pick what to eat today"),
                 BotCommand("remind", "Schedule a reminder or repeating notice"),
                 BotCommand("reminders", "List or cancel your reminders"),
                 BotCommand("cancel", "Cancel the current feedback flow"),
@@ -104,6 +119,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
         "/calc - Evaluate an arithmetic expression (e.g. /calc 2 + 3)\n"
+        "/meal - Randomly pick what to eat today\n"
         "/remind - Schedule a reminder or repeating notice (e.g. /remind in 10m Take the bread out)\n"
         "/reminders - List your reminders, or /reminders cancel <id>\n"
         "/cancel - Cancel the current feedback flow\n\n"
@@ -131,6 +147,10 @@ async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Error: division by zero")
     except Exception:
         await update.message.reply_text("Invalid expression. Example: /calc 2 + 3")
+
+
+async def meal_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(random.choice(DEFAULT_MEALS))
 
 
 async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -546,6 +566,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("calc", calc))
+    application.add_handler(CommandHandler("meal", meal_picker))
     application.add_handler(CommandHandler("remind", remind))
     application.add_handler(CommandHandler("reminders", reminders_command))
 
