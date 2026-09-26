@@ -106,6 +106,13 @@ def git_main(config: Config, *args: str, check: bool = True) -> str:
     return refs.git_main(config, *args, check=check)
 
 
+def drop_review_branch(config: Config, run: dict) -> None:
+    if run.get("change_name"):
+        reason = refs.delete_review_branch(config, run["change_name"])
+        if reason:
+            notify.warning(reason + ". Switch that checkout back to main — never check out a review branch.")
+
+
 def main_checkout_ready(config: Config) -> str:
     """Return '' if the main checkout is clean and on main, else the reason."""
     if git_main(config, "rev-parse", "--abbrev-ref", "HEAD") != "main":
@@ -143,6 +150,7 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     path = Path(run["workspace_path"])
     FeedbackService.update_auto_run(run["id"], stage="building")
     run = refresh(run)
+    drop_review_branch(config, run)  # a new BUILD makes the reviewed commit stale
     session.ensure_ready(path)
     payload = {"submission": submission, "change_name": run["change_name"]}
     if run.get("decision_note"):
@@ -163,12 +171,18 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     verification = verify.run(config, path, session.token)
     if not verification.ok:
         return build_failed(config, run, f"Tests failed in the sandbox: {verification.summary}")
+    # Branch before stage: a crash in between resumes as 'building', which drops the branch again.
+    reason = refs.set_review_branch(config, run["change_name"], ref)
+    if reason:
+        notify.warning(reason + ". Switch that checkout back to main — never check out a review branch.")
     FeedbackService.update_auto_run(run["id"], stage="awaiting_decision", build_attempts=0, last_error=None)
     run = refresh(run)
     notify.merge_request(
         run, submission, out["summary"], refs.diffstat(config, ref),
         f"{verification.summary} in the sandbox (no database there — database tests run after ✅, before merging)",
-        out["new_dependencies"], f"git -C {config.main} diff main...{ref}",
+        out["new_dependencies"],
+        f"git -C {config.main} diff main...{refs.review_branch(run['change_name']).removeprefix('refs/heads/')}",
+        refs.sensitive_paths(refs.changed_paths(config, ref)),
     )
     return "awaiting_decision"
 
@@ -210,6 +224,7 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
                              capture_output=True, text=True)
     ws.remove(config, path)
     refs.delete_ref(config, run["feedback_submission_id"])
+    drop_review_branch(config, run)
     FeedbackService.update_auto_run(run["id"], stage="merged", decision=None, last_error=None)
     notify.merged(refresh(run))
     if restart.returncode != 0:
@@ -237,6 +252,7 @@ def reject_path(config: Config, run: dict, submission: dict) -> str:
             notify.warning(f"Rejected {name}, but the main checkout is not on main, so the proposal was not archived.")
     ws.remove(config, path)
     refs.delete_ref(config, run["feedback_submission_id"])
+    drop_review_branch(config, run)
     FeedbackService.update_auto_run(run["id"], stage="rejected", decision=None)
     notify.rejected(refresh(run))
     return "rejected"

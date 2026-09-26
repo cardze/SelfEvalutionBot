@@ -62,12 +62,25 @@ def planned(run: dict, submission: dict, summary: str) -> int:
     )
 
 
+MAX_SENSITIVE = 15
+
+
+def sensitive_section(paths: list[str]) -> str:
+    if not paths:
+        return ""
+    lines = paths[:MAX_SENSITIVE]
+    if len(paths) > MAX_SENSITIVE:
+        lines.append(f"…and {len(paths) - MAX_SENSITIVE} more")
+    return "⚠️ Touches sensitive paths — read these diffs closely:\n" + "\n".join(lines) + "\n\n"
+
+
 def merge_request(run: dict, submission: dict, summary: str, diffstat: str,
-                  tests: str, new_deps: list[str], review_cmd: str) -> int:
+                  tests: str, new_deps: list[str], review_cmd: str, sensitive: list[str] = ()) -> int:
     deps = "\n".join(f"📦 New dependency: {d}" for d in new_deps) or "No new dependencies"
     message_id = send(
         f"🔀 Ready to merge: {run['change_name']}\n{feedback_line(submission)}\n\n{summary}\n\n"
-        f"Changes:\n{diffstat}\n\nTests: {tests}\n{deps}\n\nReview locally:\n{review_cmd}",
+        f"Changes:\n{diffstat}\n\n{sensitive_section(list(sensitive))}Tests: {tests}\n{deps}\n\n"
+        f"Review by diff (never check out in the main checkout):\n{review_cmd}",
         reply_markup=decision_keyboard(run["id"]),
     )
     FeedbackService.update_auto_run(run["id"], merge_request_message_id=message_id)

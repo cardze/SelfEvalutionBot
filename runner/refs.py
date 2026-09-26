@@ -82,3 +82,59 @@ def export_change(config: Config, ref: str, change_name: str, dest: Path) -> Non
 
 def delete_ref(config: Config, submission_id) -> None:
     git_main(config, "update-ref", "-d", ref_name(submission_id), check=False)
+
+
+# ---------- review branch (add-runner-review-branch) ----------
+
+# Paths whose changes deserve a close read: they control what runs, and with which trust.
+SENSITIVE_PREFIXES = ("runner/", ".claude/", ".github/", ".vscode/")
+SENSITIVE_FILES = frozenset({
+    "agents.md", "claude.md", ".envrc", "requirements.txt", "sql/init.sql",
+    "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", ".gitattributes", ".gitmodules",
+})
+SENSITIVE_BASENAMES = frozenset({"conftest.py"})
+
+
+def review_branch(change_name: str) -> str:
+    return f"refs/heads/review/{change_name}"
+
+
+def sensitive_paths(paths) -> list[str]:
+    """The paths that match the sensitive list, case-insensitively (the main checkout is on macOS)."""
+    found = []
+    for path in paths:
+        low = path.lower()
+        if (low.startswith(SENSITIVE_PREFIXES) or low in SENSITIVE_FILES
+                or low.rsplit("/", 1)[-1] in SENSITIVE_BASENAMES):
+            found.append(path)
+    return found
+
+
+def changed_paths(config: Config, ref: str) -> list[str]:
+    """Files changed on the branch; NUL-separated so no path is quoted, both sides of a rename."""
+    out = git_main(config, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
+                   f"main...{ref}")
+    return [p for p in out.split("\0") if p]
+
+
+def _checked_out(config: Config, branch: str) -> bool:
+    listing = git_main(config, "worktree", "list", "--porcelain")
+    return f"branch {branch}" in listing.splitlines()
+
+
+def set_review_branch(config: Config, change_name: str, ref: str) -> str:
+    """Point review/<name> at ref's commit. Returns '' or a reason it was left alone."""
+    branch = review_branch(change_name)
+    if _checked_out(config, branch):
+        return f"{branch.removeprefix('refs/heads/')} is checked out, so the runner did not move it"
+    git_main(config, "update-ref", branch, git_main(config, "rev-parse", "--verify", f"{ref}^{{commit}}"))
+    return ""
+
+
+def delete_review_branch(config: Config, change_name: str) -> str:
+    """Delete review/<name> if present. Returns '' or a reason it was left alone."""
+    branch = review_branch(change_name)
+    if _checked_out(config, branch):
+        return f"{branch.removeprefix('refs/heads/')} is checked out, so the runner did not delete it"
+    git_main(config, "update-ref", "-d", branch, check=False)
+    return ""

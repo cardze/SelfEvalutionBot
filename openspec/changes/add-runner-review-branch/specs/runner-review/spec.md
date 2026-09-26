@@ -21,9 +21,11 @@ any git command inside the workspace to do so.
 
 ### Requirement: Review branch lifecycle
 The runner SHALL delete `review/<change-name>` when BUILD starts again for the run, when the run
-is merged, and when the run is rejected. It SHALL keep the branch when a merge is aborted. If the
-main checkout's `HEAD` is the review branch, the runner SHALL NOT move or delete it and SHALL send
-the admin a ⚠️ warning instead.
+is merged, and when the run is rejected (including when the main checkout is not on `main`, and
+doing nothing when the run has no change name). It SHALL keep the branch when a merge is aborted.
+It SHALL set the branch before marking the run `awaiting_decision`. If the review branch is checked
+out in any worktree of the main checkout, the runner SHALL NOT move or delete it and SHALL send the
+admin a ⚠️ warning instead.
 
 #### Scenario: Request changes
 - **WHEN** the admin requests changes and the next BUILD starts
@@ -37,19 +39,25 @@ the admin a ⚠️ warning instead.
 - **WHEN** the reject path completes
 - **THEN** `review/<change-name>` no longer exists
 
+#### Scenario: Reject a run whose PLAN failed
+- **WHEN** a run with no change name is rejected
+- **THEN** the reject path completes without error
+
 #### Scenario: Merge aborted
 - **WHEN** the full test suite fails during the merge path
 - **THEN** `review/<change-name>` still points at the reviewed commit
 
 #### Scenario: Review branch is checked out
-- **WHEN** the runner would move or delete `review/<change-name>` while the main checkout's `HEAD` is that branch
+- **WHEN** the runner would move or delete `review/<change-name>` while that branch is checked out in the main checkout or in a linked worktree of it
 - **THEN** the branch is left unchanged and the admin receives a ⚠️ warning naming the branch
 
 ### Requirement: Sensitive-path warning in the merge request
-The 🔀 message SHALL list the changed files (computed in the main checkout with renames disabled,
-so both sides of a move are included) that start with `runner/`, `.claude/`, `.github/` or
-`.vscode/`, that equal `AGENTS.md`, `CLAUDE.md`, `.envrc`, `requirements.txt` or `sql/init.sql`,
-or whose basename is `conftest.py`, under a ⚠️ heading. The list SHALL be capped at 15 paths with
+The 🔀 message SHALL list, under a ⚠️ heading, the changed files (computed in the main checkout,
+NUL-separated so no path is quoted, with renames disabled so both sides of a move are included)
+that — compared case-insensitively — start with `runner/`, `.claude/`, `.github/` or `.vscode/`;
+equal `AGENTS.md`, `CLAUDE.md`, `.envrc`, `requirements.txt`, `sql/init.sql`, `pytest.ini`,
+`pyproject.toml`, `setup.cfg`, `tox.ini`, `.gitattributes` or `.gitmodules`; or have basename
+`conftest.py`. The list SHALL be capped at 15 paths with
 a count of the remainder. When no such file changed, the section SHALL be omitted. The warning
 SHALL NOT change the message's buttons or the merge decision flow.
 
@@ -60,6 +68,10 @@ SHALL NOT change the message's buttons or the merge decision flow.
 #### Scenario: File moved out of a sensitive directory
 - **WHEN** the branch renames `runner/verify.py` to `tools/verify.py`
 - **THEN** `runner/verify.py` is listed as a sensitive path
+
+#### Scenario: Unusual file name or case
+- **WHEN** the branch adds `runner/évil.py` or `.Claude/settings.json`
+- **THEN** the file is listed as a sensitive path
 
 #### Scenario: Ordinary change
 - **WHEN** the branch changes only `bot.py`, `tests/test_meal_picker.py` and `openspec/changes/<name>/`

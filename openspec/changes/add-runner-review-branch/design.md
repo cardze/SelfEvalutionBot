@@ -58,15 +58,32 @@ never offered for review.
 
 Deleting at BUILD start (instead of only overwriting at the next 🔀) means a failed rebuild never
 leaves a branch that silently disagrees with the latest messages.
-If `<MAIN>`'s `HEAD` is the review branch itself, the runner does not move or delete it and sends a
-⚠️ warning instead: moving a checked-out branch with `update-ref` would desync the working tree.
+If the review branch is checked out in any worktree of `<MAIN>` (the main one or a linked one, read
+from `git worktree list --porcelain`, whose `branch refs/heads/…` lines are exact and unaffected by a
+detached `HEAD`), the runner does not move or delete it and sends a ⚠️ warning instead: moving a
+checked-out branch with `update-ref` would desync that working tree, and the checkout itself is the
+dangerous state the admin should hear about.
+
+Ordering in `do_build`: set the review branch → set stage `awaiting_decision` → send 🔀. A crash in
+between leaves stage `building`, and the resume path deletes the branch at BUILD start. Every path
+back into BUILD (crash resume, retry after a failed verification, 💬 on `awaiting_decision` or on
+`failed`) goes through that delete.
+
+`reject_path` also runs for runs whose PLAN failed, where `change_name` is `None`; it deletes the
+review branch only when a change name exists. It deletes it even when `<MAIN>` is not on `main`
+(where archiving is skipped), because the run ends either way.
 
 ### D4. Sensitive-path warning
-Changed paths come from `git -C <MAIN> diff --name-only --no-renames --no-ext-diff --no-textconv
-main...<ref>`. `--no-renames` lists both sides of a move, so moving a file *out of* `runner/` is
-still flagged. A path is sensitive if it:
+Changed paths come from `git -C <MAIN> diff --name-only -z --no-renames --no-ext-diff --no-textconv
+main...<ref>`, split on NUL. `-z` matters: without it `core.quotePath` turns `runner/évil.py` into
+`"runner/\303\251vil.py"`, which would dodge a prefix match. `--no-renames` lists both sides of a
+move, so moving a file *out of* `runner/` is still flagged. Matching is case-insensitive, because
+the main checkout is on a case-insensitive macOS filesystem where `Runner/x.py` lands in `runner/`.
+A path is sensitive if, lowercased, it:
 - starts with `runner/`, `.claude/`, `.github/` or `.vscode/`, or
-- equals `AGENTS.md`, `CLAUDE.md`, `.envrc`, `requirements.txt` or `sql/init.sql`, or
+- equals `agents.md`, `claude.md`, `.envrc`, `requirements.txt`, `sql/init.sql`, or one of the files
+  that configure pytest or git behaviour: `pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`,
+  `.gitattributes`, `.gitmodules`, or
 - has basename `conftest.py`.
 
 The list lives in one constant in `runner/refs.py`, with a pure `sensitive_paths(paths)` function so
