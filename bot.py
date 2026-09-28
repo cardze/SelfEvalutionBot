@@ -70,6 +70,45 @@ DEFAULT_MEALS = (
     "拉麵",
 )
 
+DEFAULT_DRINKS = (
+    "珍珠奶茶",
+    "冬瓜茶",
+    "美式咖啡",
+    "檸檬紅茶",
+    "可樂",
+    "豆漿",
+    "綠茶",
+    "柳橙汁",
+)
+
+DELUXE_PREFIXES = (
+    "皇家",
+    "至尊",
+    "黃金",
+    "帝王",
+    "米其林級",
+)
+
+DELUXE_SUFFIXES = (
+    "豪華套餐",
+    "饗宴",
+    "尊爵組合",
+    "限定套餐",
+)
+
+
+def build_meal_combo(rng=random):
+    """Pick a meal and drink and build a deluxe combo name.
+
+    ``rng`` is any object exposing ``choice(seq)``; returns
+    ``(meal, drink, deluxe_name)``.
+    """
+    meal = rng.choice(DEFAULT_MEALS)
+    drink = rng.choice(DEFAULT_DRINKS)
+    prefix = rng.choice(DELUXE_PREFIXES)
+    suffix = rng.choice(DELUXE_SUFFIXES)
+    return meal, drink, f"{prefix}{meal}佐{drink}{suffix}"
+
 
 def _eval_expr(node):
     if isinstance(node, ast.Expression):
@@ -90,7 +129,7 @@ async def setup_bot_commands(application: Application) -> None:
                 BotCommand("start", "Start here and type / for command suggestions"),
                 BotCommand("feedback", "Share feedback with the bot"),
                 BotCommand("calc", "Evaluate an arithmetic expression, e.g. /calc 2 + 3"),
-                BotCommand("meal", "Randomly pick what to eat today"),
+                BotCommand("meal", "Pick a meal + drink combo for today"),
                 BotCommand("remind", "Schedule a reminder or repeating notice"),
                 BotCommand("reminders", "List or cancel your reminders"),
                 BotCommand("cancel", "Cancel the current feedback flow"),
@@ -119,7 +158,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
         "/calc - Evaluate an arithmetic expression (e.g. /calc 2 + 3)\n"
-        "/meal - Randomly pick what to eat today\n"
+        "/meal - Pick a meal + drink combo for today\n"
         "/remind - Schedule a reminder or repeating notice (e.g. /remind in 10m Take the bread out)\n"
         "/reminders - List your reminders, or /reminders cancel <id>\n"
         "/cancel - Cancel the current feedback flow\n\n"
@@ -150,7 +189,10 @@ async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def meal_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(random.choice(DEFAULT_MEALS))
+    meal, drink, deluxe_name = build_meal_combo()
+    await update.message.reply_text(
+        f"✨ {deluxe_name}\n🍽 餐點：{meal}\n🥤 飲料：{drink}"
+    )
 
 
 async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
