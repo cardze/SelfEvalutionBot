@@ -143,9 +143,16 @@ def test_application_builder_registers_post_init(monkeypatch):
             captured["post_init"] = callback
             return self
 
+        def connect_timeout(self, value):
+            return self
+
+        def read_timeout(self, value):
+            return self
+
         def build(self):
             return SimpleNamespace(
                 add_handler=lambda *a, **k: None,
+                add_error_handler=lambda *a, **k: None,
                 run_polling=lambda: None,
                 bot=SimpleNamespace(),
             )

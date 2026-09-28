@@ -6,6 +6,7 @@ import os
 import random
 from uuid import UUID
 from telegram import Update, BotCommand, ForceReply
+from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application,
@@ -43,6 +44,35 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Initialize storage service
 feedback_service = FeedbackService()
+
+# Waits before the 2nd and 3rd attempt of a reply that failed with a transient network error.
+_REPLY_DELAYS = (1, 3)
+# Telegram connect/read timeouts in seconds (python-telegram-bot's default is 5).
+_TELEGRAM_TIMEOUT = 10
+
+
+def _retryable(exc: TelegramError) -> bool:
+    # BadRequest subclasses NetworkError in python-telegram-bot, but retrying it cannot help.
+    return isinstance(exc, NetworkError) and not isinstance(exc, BadRequest)
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+async def _reply(message, text: str, **kwargs) -> bool:
+    """Reply, retrying transient network errors. Returns False instead of raising a TelegramError."""
+    for attempt in range(len(_REPLY_DELAYS) + 1):
+        try:
+            await message.reply_text(text, **kwargs)
+            return True
+        except TelegramError as exc:
+            if not _retryable(exc) or attempt == len(_REPLY_DELAYS):
+                logger.warning("Reply not delivered after %d attempt(s): %s: %s",
+                               attempt + 1, type(exc).__name__, exc)
+                return False
+            await _sleep(_REPLY_DELAYS[attempt])
+    return False
 
 STEP_BUG, STEP_SUGGESTION = range(2)
 
@@ -292,7 +322,8 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Record event in database (run in thread to avoid blocking)
     await asyncio.to_thread(feedback_service.record_event, user.id, "started")
     
-    await update.message.reply_text(
+    await _reply(
+        update.message,
         "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
         "What bug or current feature didn't meet your expectation?\n\n"
         "Hint: You can type /cancel anytime to stop this flow\\.",
@@ -303,7 +334,9 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def feedback_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["bug"] = update.message.text
-    await update.message.reply_text(
+    # The step follows what is saved: move on even if the Step 2 prompt could not be delivered.
+    await _reply(
+        update.message,
         "📝 *Feedback Form* \\(Step 2 of 2\\)\n\n"
         "How do you suggest fixing the bug or what new feature would you like?",
         parse_mode="MarkdownV2",
@@ -333,7 +366,9 @@ async def feedback_suggestion(
         feedback_service.record_event, user.id, "submitted", submission_id
     )
 
-    await update.message.reply_text(
+    # Stored: the form ends whether or not the thank-you gets through.
+    await _reply(
+        update.message,
         "✅ *Thank you for your feedback\\!*\n\n"
         f"*Issue reported:*\n{escape_markdown(bug, version=2)}\n\n"
         f"*Your suggestion:*\n{escape_markdown(suggestion, version=2)}\n\n"
@@ -349,7 +384,7 @@ async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Record event in database (run in thread to avoid blocking)
     await asyncio.to_thread(feedback_service.record_event, user.id, "cancelled")
     
-    await update.message.reply_text("Feedback cancelled. Feel free to use /feedback anytime.")
+    await _reply(update.message, "Feedback cancelled. Feel free to use /feedback anytime.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -477,7 +512,7 @@ async def clarification_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     if clarification is None:
         return
     reply = await record_answer(clarification, message.text, "free_text")
-    await message.reply_text(reply)
+    await _reply(message, reply)  # never raises, so the answer cannot fall through to /feedback
     raise ApplicationHandlerStop
 
 
@@ -551,10 +586,11 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     applied = await asyncio.to_thread(
         FeedbackService.set_auto_run_decision, run["id"], "changes", message.text
     )
-    await message.reply_text(
+    await _reply(
+        message,
         "Noted. The runner will rebuild with your changes within an hour."
         if applied
-        else "This run is no longer awaiting a decision."
+        else "This run is no longer awaiting a decision.",
     )
     raise ApplicationHandlerStop
 
@@ -562,6 +598,28 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def _post_init(application: Application) -> None:
     """Start the reminder delivery loop on PTB's running event loop (see design D1)."""
     asyncio.create_task(reminders.delivery_loop(application.bot))
+
+
+async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log handler and polling errors. `update` is None for polling errors, so it is not used."""
+    err = context.error
+    if isinstance(err, TelegramError) and _retryable(err):
+        logger.warning("Telegram network error: %s: %s", type(err).__name__, err)
+    else:
+        logger.error("Unhandled error", exc_info=err)
+
+
+def build_application(token: str) -> Application:
+    application = (
+        Application.builder()
+        .token(token)
+        .connect_timeout(_TELEGRAM_TIMEOUT)
+        .read_timeout(_TELEGRAM_TIMEOUT)
+        .post_init(_post_init)
+        .build()
+    )
+    application.add_error_handler(_on_error)
+    return application
 
 
 def main() -> None:
@@ -576,7 +634,7 @@ def main() -> None:
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
-    application = Application.builder().token(token).post_init(_post_init).build()
+    application = build_application(token)
 
     try:
         try:
