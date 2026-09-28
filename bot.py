@@ -4,8 +4,15 @@ import logging
 import operator
 import os
 import random
+from urllib.parse import quote
 from uuid import UUID
-from telegram import Update, BotCommand, ForceReply
+from telegram import (
+    BotCommand,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.helpers import escape_markdown
 from telegram.ext import (
@@ -126,6 +133,9 @@ DELUXE_SUFFIXES = (
     "限定套餐",
 )
 
+UBER_EATS_SEARCH_URL = "https://www.ubereats.com/tw/search?q="
+FOODPANDA_SEARCH_URL = "https://www.foodpanda.com.tw/search?q="
+
 
 def build_meal_combo(rng=random):
     """Pick a meal and drink and build a deluxe combo name.
@@ -138,6 +148,19 @@ def build_meal_combo(rng=random):
     prefix = rng.choice(DELUXE_PREFIXES)
     suffix = rng.choice(DELUXE_SUFFIXES)
     return meal, drink, f"{prefix}{meal}佐{drink}{suffix}"
+
+
+def build_order_links(meal):
+    """Build delivery-platform search links for ``meal``.
+
+    Pure helper with no network access; returns a list of ``(label, url)``
+    tuples, Uber Eats first, then foodpanda.
+    """
+    query = quote(meal, safe="")
+    return [
+        ("Uber Eats", UBER_EATS_SEARCH_URL + query),
+        ("foodpanda", FOODPANDA_SEARCH_URL + query),
+    ]
 
 
 def _eval_expr(node):
@@ -188,7 +211,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
         "/calc - Evaluate an arithmetic expression (e.g. /calc 2 + 3)\n"
-        "/meal - Pick a meal + drink combo for today\n"
+        "/meal - Pick a meal + drink combo for today, with Uber Eats and foodpanda order links\n"
         "/remind - Schedule a reminder or repeating notice (e.g. /remind in 10m Take the bread out)\n"
         "/reminders - List your reminders, or /reminders cancel <id>\n"
         "/cancel - Cancel the current feedback flow\n\n"
@@ -220,8 +243,12 @@ async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def meal_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     meal, drink, deluxe_name = build_meal_combo()
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(label, url=url) for label, url in build_order_links(meal)]]
+    )
     await update.message.reply_text(
-        f"✨ {deluxe_name}\n🍽 餐點：{meal}\n🥤 飲料：{drink}"
+        f"✨ {deluxe_name}\n🍽 餐點：{meal}\n🥤 飲料：{drink}",
+        reply_markup=keyboard,
     )
 
 
