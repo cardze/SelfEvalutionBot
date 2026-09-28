@@ -9,6 +9,7 @@ rather than a pure function like the calculator.
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import quote
 
 import bot
 
@@ -16,9 +17,11 @@ import bot
 class FakeMessage:
     def __init__(self):
         self.replies = []
+        self.reply_kwargs = []
 
     async def reply_text(self, text, **kwargs):
         self.replies.append(text)
+        self.reply_kwargs.append(kwargs)
 
 
 class FakeUpdate:
@@ -158,3 +161,51 @@ def test_meal_appears_in_help_text_with_drink():
     meal_lines = [line for line in message.split("\n") if line.startswith("/meal")]
     assert len(meal_lines) == 1
     assert "drink" in meal_lines[0].lower()
+
+
+def test_build_order_links_returns_both_platforms_in_order():
+    links = bot.build_order_links("拉麵")
+
+    assert [label for label, _ in links] == ["Uber Eats", "foodpanda"]
+    assert links[0][1].startswith("https://www.ubereats.com/tw/")
+    assert links[1][1].startswith("https://www.foodpanda.com.tw/")
+    assert links[0][1].startswith(bot.UBER_EATS_SEARCH_URL)
+    assert links[1][1].startswith(bot.FOODPANDA_SEARCH_URL)
+
+
+def test_build_order_links_percent_encodes_chinese_meal():
+    links = bot.build_order_links("牛肉麵")
+
+    for _, url in links:
+        assert "%E7%89%9B%E8%82%89%E9%BA%B5" in url
+        assert url.isascii()
+        assert " " not in url
+
+
+def test_meal_picker_attaches_order_link_keyboard_for_meal_only():
+    meal, drink = "牛肉麵", "珍珠奶茶"
+    update = _update()
+    with patch("bot.build_meal_combo", return_value=(meal, drink, "皇家牛肉麵佐珍珠奶茶饗宴")):
+        replies = _run(bot.meal_picker, update, _context())
+
+    assert len(replies) == 1
+    markup = update.message.reply_kwargs[-1]["reply_markup"]
+    rows = markup.inline_keyboard
+    assert len(rows) == 1
+    assert len(rows[0]) == 2
+    assert [button.text for button in rows[0]] == ["Uber Eats", "foodpanda"]
+    for button in rows[0]:
+        assert button.url
+        assert quote(meal, safe="") in button.url
+        assert quote(drink, safe="") not in button.url
+
+
+def test_meal_help_line_mentions_delivery_platforms():
+    update = FakeUpdate()
+    asyncio.run(bot.help_command(update, None))
+    message = update.message.replies[-1]
+
+    meal_lines = [line for line in message.split("\n") if line.startswith("/meal")]
+    assert len(meal_lines) == 1
+    assert "Uber Eats" in meal_lines[0]
+    assert "foodpanda" in meal_lines[0]
