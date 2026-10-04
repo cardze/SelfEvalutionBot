@@ -4,7 +4,7 @@
 For a new submission, the runner SHALL:
 1. create a workspace
 2. run a PLAN agent run and notify the admin (📋) with the plan summary and its impact — the changes (commands and files affected), the risk (what could break) and the size (small, medium or large); PLAN output without a valid impact SHALL fail the stage
-3. if the submission was created from an accepted runner signal, stop and wait for the admin's ▶️ Build or ❌ Drop on the 📋 message; otherwise continue
+3. if the submission was created from an accepted runner signal, stop and wait for the admin's ▶️ Build or ❌ Drop on the 📋 message, resending that message if it was not delivered; otherwise continue
 4. run a BUILD agent run
 5. fetch the branch into the main checkout and run the test suite inside the sandbox (database tests skip there)
 6. if the suite passes, send a merge request (🔀) with ✅ Merge, ❌ Reject and 💬 Request changes
@@ -27,6 +27,10 @@ It SHALL continue through these stages in one start, stopping only when waiting 
 - **WHEN** a gated run in stage `planned` has `decision='reject'`
 - **THEN** the reject path runs: a `wont_do` event is recorded and the proposal is archived with `REJECTED.md`
 
+#### Scenario: Lost plan message
+- **WHEN** a gated run is in stage `planned` and its 📋 message was never delivered
+- **THEN** the next runner start sends the 📋 message with ▶️ Build and ❌ Drop again
+
 #### Scenario: Invalid impact
 - **WHEN** PLAN output has no `impact`, or its `size` is not small, medium or large
 - **THEN** the PLAN stage fails
@@ -36,7 +40,7 @@ It SHALL continue through these stages in one start, stopping only when waiting 
 - **THEN** it resumes with BUILD, without re-planning, unless the run is gated and has no `build` decision, in which case it keeps waiting
 
 ### Requirement: Admin decisions via Telegram
-The bot SHALL accept ✅, ❌, 💬 and ▶️ taps on runner messages only from `ADMIN_USER_ID`, and SHALL record them on the matching `auto_runs` row. ▶️ Build SHALL be accepted only for a run in stage `planned`, and ❌ additionally for a run in stage `planned`. 💬 SHALL prompt for a note via ForceReply, and the reply SHALL be stored as `decision_note`. The bot SHALL NOT merge, reject, build or run agents itself.
+The bot SHALL accept ✅, ❌, 💬 and ▶️ taps on runner messages only from `ADMIN_USER_ID`, and SHALL record them on the matching `auto_runs` row. ▶️ Build and ❌ SHALL be accepted for a run in stage `planned` only when it was created from an accepted runner signal; ✅ SHALL never be accepted in stage `planned`. A BUILD SHALL clear any recorded decision when it starts. 💬 SHALL prompt for a note via ForceReply, and the reply SHALL be stored as `decision_note`. The bot SHALL NOT merge, reject, build or run agents itself.
 
 #### Scenario: Non-admin tap
 - **WHEN** a user other than the admin triggers a runner callback
@@ -49,6 +53,10 @@ The bot SHALL accept ✅, ❌, 💬 and ▶️ taps on runner messages only from
 #### Scenario: Build tapped
 - **WHEN** the admin taps ▶️ Build on a 📋 message for a run in stage `planned`
 - **THEN** `decision='build'` is stored, and the admin is told the build starts within an hour
+
+#### Scenario: Stale reject on an ungated run
+- **WHEN** a ❌ callback arrives for a run in stage `planned` that did not come from a runner signal
+- **THEN** it is not recorded, and the run later reaches `awaiting_decision` with no decision
 
 #### Scenario: Request changes
 - **WHEN** the admin taps 💬 and replies to the prompt with a note

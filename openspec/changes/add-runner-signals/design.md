@@ -2,31 +2,26 @@
 
 The runner (`runner/runner.py`) is started hourly by launchd. `tick()` resumes an in-flight run,
 or — if not throttled — starts work on the oldest actionable **admin** submission. The bot runs
-under launchd too and writes its log to `~/.seb-runner/logs/bot.err.log` (python `logging`, one
-header line per record, tracebacks on following lines). Since `harden-feedback-conversation` the
-bot logs:
+under launchd and logs to `~/.seb-runner/logs/bot.err.log`.
 
-```
-… - __main__ - ERROR - Unhandled error
-Traceback (most recent call last):
-  File "/…/SelfEvalutionBot/bot.py", line 249, in meal_picker
-  …
-telegram.error.BadRequest: Message to be replied not found
-… - __main__ - WARNING - Reply not delivered after 3 attempt(s): TimedOut: Timed out
-… - reminders - ERROR - Failed to deliver reminder <uuid>: <error>
-… - __main__ - WARNING - Telegram network error: NetworkError: Bad Gateway   (polling noise)
-```
+That text log cannot be a trusted input: Python `logging` writes newlines unescaped, and user
+influenced text reaches it (database error details in `storage.py`, reminder delivery errors in
+`reminders.py`, exception messages after every traceback). A message containing
+`\n<timestamp> - __main__ - ERROR - Unhandled error\nTraceback…\n  File "<MAIN>/bot.py", line 1, in
+some_words` is indistinguishable from a real record (reproduced during evaluation). Character
+patterns limit *which characters* pass, not *what they say*. So signals come from a separate,
+structured event stream the bot writes from exception objects, never from log text.
 
-The runner's trust model: only admin-written feedback starts work, agents run sandboxed, and the
-trusted runner never executes agent-controlled content.
+The runner's trust model: only admin-written feedback starts work, agents run sandboxed (the
+sandbox denies `~/.seb-runner`), and the trusted runner never executes agent-controlled content.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Surface recurring or unexpected problems from the bot log to the admin, with no model cost.
-- Turn a suggestion into work only through an explicit admin tap.
-- Keep every word an agent later reads either admin-written or runner-templated from
-  strictly-validated facts.
+- Surface recurring or unexpected problems to the admin, with no model cost.
+- State the impact of the problem in the suggestion, and the impact of the fix before building.
+- Turn a suggestion into work only through explicit admin taps (📋, then ▶️).
+- No user-controlled text can reach a suggestion, a submission, or an agent prompt.
 
 **Non-Goals:**
 - Starting work without a tap (level 2), or merging without ✅ (level 3).
@@ -35,135 +30,162 @@ trusted runner never executes agent-controlled content.
 
 ## Decisions
 
-### D1. Deterministic detection in the trusted runner, no model
-`runner/signals.py` parses the log with regular expressions. No agent sees the log (the sandbox
-already denies `~/.seb-runner`), and a tick costs nothing. *Alternative*: a cheap model summarising
-the log — rejected: it would put raw log text (which can carry user-influenced content) in front of
-a model, and costs money every hour.
+### D1. Deterministic, no model
+Detection, impact and wording are code in the trusted runner. No agent sees the events, and a tick
+costs nothing. *Alternative*: a model summarising the log — rejected (cost, and it would put
+user-influenced text in front of a model).
 
-### D2. Incremental reading
-The runner keeps `~/.seb-runner/signals_offset` = `{"inode": …, "offset": …}`. Each tick reads from
-the offset to EOF. If the inode changed or the file is shorter than the offset (rotation or
-truncation), it starts from 0. On first run (no state file) it starts from **the current end** —
-historical errors are not replayed. Reads at most 5 MB per tick. A partial last line (no trailing
-newline) is left for the next tick.
+### D2. Structured event file written by the bot
+New module `signals_events.py` (repo root, imported by `bot.py` and `reminders.py`) appends one
+JSON object per line to `SIGNALS_FILE` (env `SEB_SIGNALS_FILE`, default
+`~/.seb-runner/logs/signals.jsonl`). Every field is computed from objects, never from message text:
 
-### D3. Signals and fingerprints (facts only)
-| Kind | Matched by | Fingerprint | Threshold |
-|---|---|---|---|
-| `unhandled` | header `… - ERROR - Unhandled error`, then the traceback until the next header | `unhandled:<exception class>:<file>:<function>` | 1 occurrence |
-| `reply_failed` | `… - WARNING - Reply not delivered after N attempt(s): <ErrorClass>:` | `reply_failed:<ErrorClass>` | 3 within 24 h |
-| `reminder_failed` | `… - ERROR - Failed to deliver reminder <uuid>: …` | `reminder_failed` | 3 within 24 h |
+```json
+{"v": 1, "ts": "2026-10-04T03:44:10.123+00:00", "kind": "unhandled",
+ "exc": "telegram.error.BadRequest", "file": "bot.py", "func": "meal_picker", "line": 249,
+ "user": 908274693, "known_cause": "reply_target_gone"}
+```
 
-- `<exception class>` must match `^[A-Za-z_][\w.]{0,100}$` (the token before the first `:` on the
-  last traceback line); `<file>` is the deepest `File "<MAIN>/<path>"` frame inside the main
-  checkout, with `<path>` matching `^[\w./-]{1,200}$`; `<function>` must match `^\w{1,100}$`.
-  Anything that fails validation is dropped (counted in the runner log, never suggested).
-- Exception messages, reminder ids/texts and every other part of the line are discarded. Line
-  numbers are kept only as an informational hint in the 💡 message, not in the fingerprint, so an
-  edit to the file does not create a new signal. The one exception is D9's known-cause lookup,
-  which compares the message for **exact equality** against a fixed table and then discards it.
-- A `user=<digits>` / `chat=<digits>` token (D10) is kept only if it matches `^\d{1,20}$`.
-- `Telegram network error` lines (polling) are ignored.
+- `kind`: `unhandled` (from `bot._on_error`, for errors that are not `_retryable` network errors),
+  `reply_failed` (from `bot._reply` when it gives up), `reminder_failed` (from
+  `reminders._deliver_due` when a send fails).
+- `exc`: `f"{type(e).__module__}.{type(e).__qualname__}"` (`builtins.` dropped).
+- `file` / `func` / `line`: the deepest frame of `traceback.extract_tb(e.__traceback__)` whose path
+  is inside the repository root and not under any `site-packages`; `file` is relative to the root.
+  For `reply_failed` the frame is the caller of `_reply` (`sys._getframe(1)`), e.g.
+  `feedback_bug`. Omitted when no in-repo frame exists.
+- `user`: `update.effective_user.id` for `unhandled`; `message.chat_id` for `reply_failed`; the
+  reminder's `user_id` for `reminder_failed`. Integers only; omitted when unknown.
+- `known_cause`: computed **in the bot** by exact match of `(exc, str(e))` against
+  `KNOWN_CAUSES` in `signals_events.py`; only the key is written (D9). The message itself is never
+  written.
+- `json.dumps` escapes newlines, so one event is always one line. Writing is best-effort:
+  any `OSError` (missing directory, sandboxed test runs) is swallowed and never affects the bot.
+- Polling errors (`_retryable` network errors in `_on_error`) are not written.
 
-### D4. Table `runner_signals`
+### D3. Runner-side validation (defence in depth)
+`runner/signals.py` accepts an event only if all of these hold, and drops it otherwise (counted):
+- valid JSON object with `v == 1` and `kind` in the three kinds;
+- `ts` parses as an ISO timestamp **with** an offset and is not in the future (+5 min slack);
+- `exc` matches `^[A-Za-z_][\w.]{0,100}$`;
+- if present: `file` is a path tracked by git on `main` in `<MAIN>` (`git ls-files`), not under
+  `site-packages`; `func` matches `^\w{1,100}$` **and** `def <func>(` / `async def <func>(` occurs in
+  that file on `main` (`git show main:<file>`); `line` is a positive int; `user` is an int ≥ 0;
+- `known_cause`, if present, is a key of `KNOWN_CAUSES`.
+Fingerprints: `unhandled:<exc>:<file>:<func>`, `reply_failed:<exc>:<func>`, `reminder_failed:<exc>`.
+The line number is an informational hint only, never part of the fingerprint.
+
+### D4. Incremental reading with an exact cursor
+- The cursor (`inode`, `offset`) lives in a single-row table `runner_signal_cursor` and is updated
+  **in the same transaction** as the occurrences it covers — a crash can neither lose nor
+  double-count events.
+- Each tick reads from `offset`, at most 5 MB, and processes only up to the last `\n` in what it
+  read (a partial final line waits). If the inode changed or the file is shorter than `offset`
+  (rotation, truncation), it reads from 0.
+- With no cursor row (first run), the cursor is created at the file's current end: nothing is
+  replayed. With no file, nothing happens.
+
+### D5. Tables
 ```sql
 CREATE TABLE IF NOT EXISTS runner_signals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     fingerprint VARCHAR(300) NOT NULL UNIQUE,
     kind VARCHAR(30) NOT NULL CHECK (kind IN ('unhandled', 'reply_failed', 'reminder_failed')),
-    summary TEXT NOT NULL,                -- templated from validated facts only
+    exc VARCHAR(101) NOT NULL,
+    file VARCHAR(200),
+    func VARCHAR(100),
+    last_line INT,
+    known_cause VARCHAR(50),
     occurrences INT NOT NULL DEFAULT 0,
     first_seen TIMESTAMPTZ NOT NULL,
     last_seen TIMESTAMPTZ NOT NULL,
-    recent JSONB NOT NULL DEFAULT '[]',   -- timestamps within the 24 h window
-    users JSONB NOT NULL DEFAULT '[]',    -- distinct user/chat ids seen (digits only)
-    impact TEXT NOT NULL DEFAULT '',      -- D9 impact lines, templated
-    known_cause VARCHAR(50),              -- key into D9's known-cause table, or NULL
+    recent JSONB NOT NULL DEFAULT '[]',   -- occurrence timestamps within the last 24 h
+    users JSONB NOT NULL DEFAULT '[]',    -- distinct ids (integers)
     status VARCHAR(20) NOT NULL DEFAULT 'observed'
         CHECK (status IN ('observed', 'suggested', 'accepted', 'dismissed')),
     status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     message_id BIGINT,
     feedback_submission_id UUID REFERENCES feedback_submissions(id) ON DELETE SET NULL
 );
+CREATE TABLE IF NOT EXISTS runner_signal_cursor (
+    id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+    inode BIGINT NOT NULL,
+    byte_offset BIGINT NOT NULL
+);
+ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS plan_summary TEXT;
+ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS plan_message_id BIGINT;
+-- decision gains 'build' (drop + re-add, as init.sql already does for other constraints)
 ```
-New `FeedbackService` methods: `record_signal_occurrences`, `signals_to_suggest`,
-`mark_signal_suggested`, `accept_signal`, `dismiss_signal`.
+Summaries and impact text are not stored; they are rendered from the validated columns (D9).
 
-### D5. Suggestion lifecycle
+### D6. Suggestion lifecycle
 ```
-observed ──threshold met──▶ suggested ──📋──▶ accepted ──submission resolved──▶ observed
-    ▲                          │                                       (count resets)
-    └──── 7 days + new occurrences ── dismissed ◀──🙈──┘
+observed ──threshold met──▶ suggested ──📋──▶ accepted ──submission resolved──▶ observed (counters reset)
+    ▲                          │                  └────submission wont_do──────▶ dismissed
+    └── 7 days + new occurrences ── dismissed ◀──🙈──┘
 ```
-- A signal is suggested when its threshold is met and its status is `observed`, or it is
-  `dismissed` for ≥ 7 days **and** has new occurrences since the dismissal.
-- `accepted` is not re-suggested while its submission is unresolved; once resolved it returns to
-  `observed` with its counters reset, so a regression after the fix is suggested again.
-- At most 3 suggestions per rolling 24 h; the rest wait for a later tick (oldest `first_seen`
-  first).
+- Thresholds: `unhandled` 1 occurrence; `reply_failed` / `reminder_failed` 3 within 24 h.
+- Suggested when the threshold is met and status is `observed`, or `dismissed` for ≥ 7 days with
+  occurrences after `status_changed_at`.
+- Each tick, accepted signals whose submission has a `resolved` event return to `observed`
+  (counters reset — a regression is suggested again); those with a `wont_do` event (❌ at PLAN or
+  🔀) become `dismissed`. Detected by joining `feedback_events` on `feedback_submission_id`.
+- At most 3 suggestions per rolling 24 h, oldest `first_seen` first. A failed send leaves the
+  status unchanged, so it is retried next tick.
 
-### D6. Where it runs in `tick()`
-Signal scanning runs first in every tick, before resuming or throttling, wrapped so that any
-exception is logged and never prevents the rest of the tick. It does not count against the 5-hour
-throttle. An accepted suggestion becomes an ordinary admin submission and waits in the normal
-queue.
+### D7. Where it runs in `tick()`
+First in every tick, before resuming or throttling: read → record (one transaction, with the
+cursor) → reset/dismiss accepted signals → send suggestions. Wrapped so any exception is logged
+and never stops the rest of the tick. It does not count against the throttle. One summary line
+per tick in the runner log (events read / dropped / suggestions sent).
 
-### D7. 💡 message and callback
-`notify.signal(signal)` sends (plain text, built from D9's facts):
+### D8. Telegram: 💡 message and `sig:` callback
+`notify.signal(signal)` sends (plain text, rendered from D9):
 ```
 💡 /meal sometimes fails for users
 Impact: the user sends /meal and probably gets no reply
 Who:    1 user · 2 times · last 2026-09-29 06:29 · none in the last 24 h
-Cause:  the user's message was gone before the bot replied (Telegram: message not found)
+Cause:  the user's message was gone before the bot replied
 Where:  bot.py → meal_picker (line 249)
 [📋 Plan a fix]  [🙈 Dismiss]
 ```
-The `Cause:` line appears only for a known cause; `Who:` says "users: unknown" when no ids were
-logged (e.g. reminders).
-Callback data `sig:<uuid>:p` / `sig:<uuid>:d`, handled in `bot.py` by `signal_decision`
-(admin-only, ignored otherwise, like `runner_decision`). It calls `query.answer()` first, then:
-- `p`: `accept_signal` stores a submission for the admin — `bug_text` = the summary,
-  `suggestion_text` = "Find the cause and fix it so this no longer happens. (Suggested by the
-  runner from the bot log, signal <fingerprint>.)" — records `submitted`, links it, and edits the
-  message to "📋 Queued as feedback".
-- `d`: `dismiss_signal`, edits the message to "🙈 Dismissed for 7 days".
-- Already-decided signals answer "Already handled" and change nothing.
+Callback `sig:<uuid>:p|d`, handled by `bot.signal_decision`: admin only (others ignored),
+`query.answer()` first, then:
+- `p`: `FeedbackService.accept_signal(id, admin_id)` — **one transaction**: `UPDATE runner_signals
+  SET status='accepted' … WHERE id=%s AND status='suggested' RETURNING …`; if a row came back,
+  insert the submission (bug text = rendered summary, suggestion text = "Find the cause and fix it
+  so this no longer happens. (Suggested by the runner, signal <fingerprint>.)"), the `submitted`
+  event, and the link. It does not reuse `store_submission` (separate connection, swallows
+  errors). A double tap gets no row back → "Already handled".
+- `d`: `dismiss_signal` (`WHERE status='suggested'`), message edited to "🙈 Dismissed for 7 days".
 
-### D8. Trust boundary
-Every character an agent can later read from an accepted suggestion comes from (a) the runner's
-fixed template or (b) fields that passed D3's strict patterns. User text in the log (e.g. inside
-an exception message) is never extracted. The submission is authored by the admin's tap, so the
-existing "only admin feedback triggers runs" requirement still holds unchanged.
+### D9. Rendering the impact (problem)
+- **Feature** — from `<MAIN>/bot.py` on `main` (`git show main:bot.py`):
+  `CommandHandler("<cmd>", <func>)` → `/<cmd>`; functions listed inside a `ConversationHandler(…)`
+  (entry points and states) → that conversation's entry command (`feedback_bug` → `/feedback`);
+  `CallbackQueryHandler(<func>, pattern=r"^<prefix>:")` → a fixed label per prefix (`run:` →
+  "the buttons on runner messages", `apv:` / `clr:` → "the clarification buttons", `sig:` → "the
+  💡 suggestion buttons"); `file == "reminders.py"` → "reminder delivery"; otherwise
+  "internal code (`<func>`)".
+- **Experience** — fixed text per kind and feature type: command → "the user sends /x and
+  probably gets no reply"; button → "the tap probably shows no result"; `reply_failed` → "a reply
+  did not arrive (what the user typed is still saved)"; `reminder_failed` → "a reminder is delayed
+  until a retry succeeds".
+- **Who / how often** — distinct `users` ("users unknown" if none), `occurrences`, `last_seen`
+  (shown in Asia/Taipei like the rest of the bot), count in the last 24 h.
+- **Cause** — `KNOWN_CAUSES[known_cause].explanation`, e.g. `reply_target_gone` (`BadRequest`,
+  "Message to be replied not found") → "the user's message was gone before the bot replied";
+  `query_too_old` → "the button was answered too late (e.g. during a bot restart)";
+  `bot_blocked` (`Forbidden`, "Forbidden: bot was blocked by the user") → "the user has blocked
+  the bot"; `timed_out` (`TimedOut`, "Timed out") → "Telegram did not answer in time". Omitted
+  when there is no key.
 
-### D9. Problem impact, deterministic
-Built by the trusted runner from the main checkout and the validated facts — no model:
-- **Feature**: the runner reads `<MAIN>/bot.py` and matches `CommandHandler("<cmd>", <func>)` →
-  "`/<cmd>`" and `CallbackQueryHandler(<func>, pattern=r"^<prefix>:")` → a fixed label per prefix
-  (`run:` → "the ✅/❌/💬 buttons on runner messages", `apv:` / `clr:` → "the clarification
-  buttons", `sig:` → "the 💡 suggestion buttons"). Functions in `reminders.py` → "reminder
-  delivery". Anything else → "internal code (`<function>`)". The feature name is used in the
-  headline ("/meal sometimes fails for users").
-- **Experience**, fixed text per kind: `unhandled` in a command or button handler → "the user
-  sends /x and probably gets no reply" / "the tap probably shows no result"; `reply_failed` → "a
-  /feedback reply did not arrive (what the user typed is still saved)"; `reminder_failed` → "a
-  reminder is delayed until a retry succeeds".
-- **Who / how often**: distinct ids from `users`, total occurrences, last seen, count in the last
-  24 h.
-- **Known cause**: a fixed table keyed by (exception class, exact message), e.g.
-  `(telegram.error.BadRequest, "Message to be replied not found")` → "the user's message was gone
-  before the bot replied"; `(…BadRequest, "Query is too old and response timeout expired or query
-  id is invalid")` → "the button was answered too late (e.g. during a bot restart)";
-  `(telegram.error.Forbidden, "Forbidden: bot was blocked by the user")` → "the user has blocked
-  the bot"; `(telegram.error.TimedOut, "Timed out")` → "Telegram did not answer in time". Only the
-  table's own explanation text is ever output.
-
-The handler map reads trusted, already-merged code in `<MAIN>`; it never reads a workspace.
-
-### D10. User ids in bot log lines
-`bot._on_error` appends ` user=<id>` when `update` has an `effective_user`; `_reply` appends
-` chat=<id>` from `message.chat_id` when present. Ids are Telegram numeric ids already stored in the
-database, so no new personal data is created; only digit strings are extracted (D3).
+### D10. Trust boundary
+Every character of a 💡 message or an accepted submission comes from (a) fixed template text,
+(b) `KNOWN_CAUSES` text, or (c) validated columns that were computed by the bot from exception
+objects and code locations, then re-checked against `main` (D3). No message text, log text or
+user input is read by the runner. The submission is authored by the admin's tap, so "only admin
+feedback triggers runs" still holds.
 
 ### D11. Impact of the fix in PLAN output
 `runner/prompts/plan.md` asks for:
@@ -171,54 +193,52 @@ database, so no new personal data is created; only digit strings are extracted (
 {"stage": "planned", "change_name": "…", "summary": "…",
  "impact": {"changes": "<commands/files affected>", "risk": "<what could break>", "size": "small|medium|large"}}
 ```
-`validate.validate_plan` requires `impact`, with `size` in the three values and `changes` / `risk`
-non-empty strings capped at 300 characters each; a missing or invalid block fails PLAN like any
-other output error. `notify.planned` adds:
+`validate.validate_plan` requires `impact` (`size` in the three values; `changes` / `risk`
+non-empty strings ≤ 300 characters); missing or invalid fails PLAN. The runner stores the summary
+and impact in `auto_runs.plan_summary`. `notify.planned` shows them for every run:
 ```
 Changes: …
 Risk:    …
 Size:    small
 ```
-This applies to every run, not only signal-originated ones.
 
 ### D12. Build approval for runner-suggested work
-A run is **gated** when its submission is linked from `runner_signals.feedback_submission_id`
-(a persistent fact, so crash recovery cannot bypass it).
-- `do_plan` for a gated run stops at stage `planned` and sends 📋 with **▶️ Build** /
-  **❌ Drop** (callback `run:<id>:b` / `run:<id>:r`). Non-gated runs continue to BUILD as today.
-- `handle_inflight`, stage `planned`: gated and `decision='build'` → clear the decision and run
-  BUILD; gated and `decision='reject'` → existing reject path (records `wont_do`, archives the
-  proposal with `REJECTED.md`); gated and no decision → `waiting`. Non-gated → BUILD (unchanged
-  crash resume).
-- `auto_runs.decision` CHECK gains `build` (drop + re-add the constraint, as `init.sql` already
-  does for other constraints). `set_auto_run_decision` accepts `build` only in stage `planned`, and
-  `reject` additionally in stage `planned`.
-- Waiting costs nothing: no agent runs until ▶️. The single-in-flight rule still holds, so a
-  pending gated run blocks new work until decided — the 📋 message says so.
+A run is **gated** when its submission is linked from `runner_signals.feedback_submission_id`.
+- `do_plan`, gated: store `plan_summary`, set stage `planned`, send 📋 with "Waiting for your
+  decision — no other work starts until then" and **▶️ Build** / **❌ Drop** (`run:<id>:b` /
+  `run:<id>:r`), store `plan_message_id`. Non-gated: unchanged text ("Building now…"), continue.
+- `handle_inflight`, stage `planned`, gated:
+  - `plan_message_id` is NULL (send failed or crash before it) → resend from `plan_summary`;
+  - `decision='build'` → BUILD; `decision='reject'` → existing reject path; otherwise `waiting`.
+  Non-gated `planned` → BUILD (unchanged crash resume).
+- `do_build` clears `decision` / `decision_note` as it starts (after taking the note), so no
+  stale decision survives into `awaiting_decision`.
+- `set_auto_run_decision` applies only these pairs (one SQL `WHERE`):
+  `stage IN ('awaiting_decision','failed') AND decision IN ('merge','reject','changes')`, or
+  `stage='planned' AND decision IN ('build','reject') AND` the run is gated (`EXISTS` on
+  `runner_signals`). `merge` is never accepted in `planned`.
+- A gated run whose PLAN fails behaves as today (⚠️, 💬 re-plans, and it stops at `planned` again).
+- `runner_decision` in `bot.py` maps `b` → `build` ("the build starts within an hour").
 
-*Alternative*: gate every run — rejected for now; runs from feedback the admin wrote have already
-had a human decide the goal.
+*Alternative*: gate every run — rejected for now; feedback the admin typed already had a human
+decide the goal.
 
 ## Risks / Trade-offs
 
-- [Log format changes break matching] → Signals silently stop. Mitigation: parser unit tests use
-  the exact current format; the runner logs a per-tick count of matched / dropped records.
+- [Events file not writable] → No signals; the bot is unaffected. The runner logs "no events
+  file" once per tick at debug level.
 - [Noisy signals] → Thresholds, one open suggestion per fingerprint, 3 per day, 7-day snooze.
-- [Two different bugs in the same function with the same exception class] → Merge into one
-  signal. Acceptable: the PLAN agent investigates the function.
-- [Startup offset skips the two existing bugs] → Intended (no replay); they recur on use and are
-  then suggested. A manual backfill is possible by deleting the state file *and* setting the
-  offset to 0, documented but not automated.
-- [Telegram send of 💡 fails] → Status stays `observed`; retried next tick.
-- [A gated run waits forever and blocks the queue] → It is visible as the only in-flight run; the
-  admin decides with ▶️ / ❌. A reminder or timeout is left for later.
-- [Handler map regex misses a registration style] → Falls back to "internal code (`<func>`)";
-  tests pin the current registration style.
-- [PLAN agent writes an unhelpful impact] → It is still a model's estimate; the 🔀 diff and
-  sensitive-path list remain the ground truth before ✅.
+- [Same exception class twice in one function for different reasons] → One signal. The PLAN agent
+  investigates the function.
+- [No replay of past errors] → The two existing bugs are suggested when they next occur.
+- [A gated run blocks the queue until decided] → Said in the 📋 message; lost messages are resent.
+- [Handler map misses a registration style] → Falls back to "internal code (`<func>`)"; tests pin
+  the current `bot.py`.
+- [PLAN agent's impact is an estimate] → The 🔀 diff and sensitive-path list remain the ground
+  truth before ✅.
 
 ## Migration Plan
 
-`CREATE TABLE IF NOT EXISTS` runs at bot start (`db.init_database`). Merge, restart the bot. The
-first tick creates the offset file at the log's current end. Rollback: revert the merge; the
-unused table is harmless.
+Schema changes are idempotent and run at bot start (`db.init_database`). Merge, restart the bot
+(it starts writing `signals.jsonl`); the next tick creates the cursor at the file's end. Rollback:
+revert the merge; the unused tables, columns and file are harmless.
