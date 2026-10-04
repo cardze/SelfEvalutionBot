@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS runner_signals (
     status VARCHAR(20) NOT NULL DEFAULT 'observed'
         CHECK (status IN ('observed', 'suggested', 'accepted', 'dismissed')),
     status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    summary TEXT,                         -- rendered 💡 text (D9), set when suggested
+    suggested_at TIMESTAMPTZ,             -- for the 3-per-24 h cap
     message_id BIGINT,
     feedback_submission_id UUID REFERENCES feedback_submissions(id) ON DELETE SET NULL
 );
@@ -122,7 +124,7 @@ ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS plan_summary TEXT;
 ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS plan_message_id BIGINT;
 -- decision gains 'build' (drop + re-add, as init.sql already does for other constraints)
 ```
-Summaries and impact text are not stored; they are rendered from the validated columns (D9).
+The 💡 text is rendered by the runner from the validated columns (D9) when the signal is suggested and stored in `summary`, so the bot's 📋 handler reuses it without the runner's handler map.
 
 ### D6. Suggestion lifecycle
 ```
@@ -218,8 +220,8 @@ A run is **gated** when its submission is linked from `runner_signals.feedback_s
   - `plan_message_id` is NULL (send failed or crash before it) → resend from `plan_summary`;
   - `decision='build'` → BUILD; `decision='reject'` → existing reject path; otherwise `waiting`.
   Non-gated `planned` → BUILD (unchanged crash resume).
-- `do_build` clears `decision` / `decision_note` as it starts (after taking the note), so no
-  stale decision survives into `awaiting_decision`.
+- `do_build` clears `decision` as it starts, so no stale decision survives into
+  `awaiting_decision`. `decision_note` is kept, as today, so build retries still see the 💬 note.
 - `set_auto_run_decision` applies only these pairs (one SQL `WHERE`):
   `stage IN ('awaiting_decision','failed') AND decision IN ('merge','reject','changes')`, or
   `stage='planned' AND decision IN ('build','reject') AND` the run is gated (`EXISTS` on

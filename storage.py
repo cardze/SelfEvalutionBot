@@ -2,12 +2,14 @@
 
 import logging
 from contextlib import closing
+from datetime import datetime, timedelta
 from uuid import UUID
 from typing import Optional
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from db import get_connection
+from signals_events import SUGGESTION_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +489,7 @@ class FeedbackService:
     _AUTO_RUN_FIELDS = (
         "stage", "change_name", "last_error", "build_attempts", "decision",
         "decision_note", "merge_request_message_id", "note_prompt_message_id",
+        "plan_summary", "plan_message_id",
     )
 
     @staticmethod
@@ -509,20 +512,261 @@ class FeedbackService:
 
     @staticmethod
     def set_auto_run_decision(run_id: UUID, decision: str, note: Optional[str] = None) -> bool:
-        """Record the admin's decision on a run waiting for one (or a failed run). Returns True if applied."""
+        """
+        Record the admin's decision on a run that is waiting for one. Returns True if applied.
+
+        merge/reject/changes apply to a run awaiting a merge decision (or a failed run);
+        build/reject apply to a held plan, i.e. stage 'planned' of runner-suggested work.
+        """
         conn = get_connection()
         with closing(conn):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE auto_runs SET decision = %s, decision_note = %s, updated_at = now()
-                    WHERE id = %s AND stage IN ('awaiting_decision', 'failed')
+                    UPDATE auto_runs r SET decision = %(d)s, decision_note = %(n)s, updated_at = now()
+                    WHERE r.id = %(id)s AND (
+                        (r.stage IN ('awaiting_decision', 'failed')
+                         AND %(d)s IN ('merge', 'reject', 'changes'))
+                     OR (r.stage = 'planned' AND %(d)s IN ('build', 'reject')
+                         AND EXISTS (SELECT 1 FROM runner_signals s
+                                     WHERE s.feedback_submission_id = r.feedback_submission_id))
+                    )
                     """,
-                    (decision, note, run_id),
+                    {"d": decision, "n": note, "id": run_id},
                 )
                 applied = cur.rowcount == 1
             conn.commit()
         return applied
+
+    # ---------- runner signals (runner_signals, runner_signal_cursor) ----------
+
+    @staticmethod
+    def get_signal_cursor() -> Optional[dict]:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT inode, byte_offset FROM runner_signal_cursor")
+                return cur.fetchone()
+
+    @staticmethod
+    def record_signal_events(events: list[dict], inode: int, byte_offset: int, now: datetime) -> None:
+        """
+        Add validated events to their signals and move the cursor, in one transaction.
+
+        Each event: fingerprint, kind, exc, file, func, line, known_cause, user, ts (aware datetime).
+        """
+        window_start = now - timedelta(hours=24)
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                for event in events:
+                    cur.execute(
+                        "SELECT * FROM runner_signals WHERE fingerprint = %s FOR UPDATE",
+                        (event["fingerprint"],),
+                    )
+                    row = cur.fetchone()
+                    ts = event["ts"]
+                    user = event.get("user")
+                    if row is None:
+                        cur.execute(
+                            """
+                            INSERT INTO runner_signals
+                                (fingerprint, kind, exc, file, func, last_line, known_cause,
+                                 occurrences, first_seen, last_seen, recent, users)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s)
+                            """,
+                            (event["fingerprint"], event["kind"], event["exc"], event.get("file"),
+                             event.get("func"), event.get("line"), event.get("known_cause"),
+                             ts, ts, Jsonb([ts.isoformat()] if ts >= window_start else []),
+                             Jsonb([user] if user is not None else [])),
+                        )
+                        continue
+                    recent = [r for r in row["recent"] if datetime.fromisoformat(r) >= window_start]
+                    if ts >= window_start:
+                        recent.append(ts.isoformat())
+                    users = list(row["users"])
+                    if user is not None and user not in users:
+                        users.append(user)
+                    fresh = row["occurrences"] == 0  # reset after a fix: start counting again
+                    cur.execute(
+                        """
+                        UPDATE runner_signals SET occurrences = occurrences + 1,
+                            first_seen = %s, last_seen = GREATEST(last_seen, %s),
+                            last_line = COALESCE(%s, last_line),
+                            known_cause = COALESCE(%s, known_cause),
+                            recent = %s, users = %s
+                        WHERE id = %s
+                        """,
+                        (ts if fresh else min(row["first_seen"], ts), ts, event.get("line"),
+                         event.get("known_cause"), Jsonb(recent), Jsonb(users), row["id"]),
+                    )
+                cur.execute(
+                    """
+                    INSERT INTO runner_signal_cursor (id, inode, byte_offset) VALUES (true, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET inode = EXCLUDED.inode,
+                                                   byte_offset = EXCLUDED.byte_offset
+                    """,
+                    (inode, byte_offset),
+                )
+            conn.commit()
+
+    @staticmethod
+    def settle_accepted_signals() -> tuple[int, int]:
+        """
+        Accepted signals whose submission is resolved go back to 'observed' with counters reset
+        (a regression is suggested again); those whose submission is won't-do become 'dismissed'.
+        Returns (reset, dismissed).
+        """
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE runner_signals s SET status = 'observed', status_changed_at = now(),
+                        occurrences = 0, recent = '[]', users = '[]', summary = NULL,
+                        message_id = NULL, feedback_submission_id = NULL
+                    WHERE s.status = 'accepted' AND EXISTS (
+                        SELECT 1 FROM feedback_events e
+                        WHERE e.feedback_submission_id = s.feedback_submission_id
+                          AND e.event_type = 'resolved')
+                    """
+                )
+                reset = cur.rowcount
+                cur.execute(
+                    """
+                    UPDATE runner_signals s SET status = 'dismissed', status_changed_at = now()
+                    WHERE s.status = 'accepted' AND EXISTS (
+                        SELECT 1 FROM feedback_events e
+                        WHERE e.feedback_submission_id = s.feedback_submission_id
+                          AND e.event_type = 'wont_do')
+                    """
+                )
+                dismissed = cur.rowcount
+            conn.commit()
+        return reset, dismissed
+
+    @staticmethod
+    def signal_candidates(now: datetime, snooze: timedelta) -> list[dict]:
+        """Observed signals, and dismissed ones whose snooze is over and that occurred since."""
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM runner_signals
+                    WHERE (status = 'observed' AND occurrences > 0)
+                       OR (status = 'dismissed' AND status_changed_at <= %s
+                           AND last_seen > status_changed_at)
+                    ORDER BY first_seen ASC
+                    """,
+                    (now - snooze,),
+                )
+                return cur.fetchall()
+
+    @staticmethod
+    def count_signals_suggested_since(since: datetime) -> int:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM runner_signals WHERE suggested_at >= %s", (since,))
+                return cur.fetchone()[0]
+
+    @staticmethod
+    def mark_signal_suggested(signal_id: UUID, summary: str, message_id: int) -> None:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE runner_signals SET status = 'suggested', status_changed_at = now(),
+                        suggested_at = now(), summary = %s, message_id = %s
+                    WHERE id = %s
+                    """,
+                    (summary, message_id, signal_id),
+                )
+            conn.commit()
+
+    @staticmethod
+    def get_signal(signal_id: UUID) -> Optional[dict]:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT * FROM runner_signals WHERE id = %s", (signal_id,))
+                return cur.fetchone()
+
+    @staticmethod
+    def accept_signal(signal_id: UUID, admin_id: int) -> Optional[UUID]:
+        """
+        Turn a suggested signal into an admin feedback submission, in one transaction.
+
+        The bug text is the signal's stored summary. Returns the new submission id, or None if
+        the signal was not (or no longer) 'suggested' — so a double tap stores one submission.
+        """
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE runner_signals SET status = 'accepted', status_changed_at = now()
+                    WHERE id = %s AND status = 'suggested' AND summary IS NOT NULL
+                    RETURNING summary, fingerprint
+                    """,
+                    (signal_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    conn.rollback()
+                    return None
+                suggestion_text = SUGGESTION_TEXT.format(fingerprint=row[1])
+                cur.execute(
+                    """
+                    INSERT INTO feedback_submissions (user_id, bug_text, suggestion_text)
+                    VALUES (%s, %s, %s) RETURNING id
+                    """,
+                    (admin_id, row[0], suggestion_text),
+                )
+                submission_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO feedback_events (user_id, event_type, feedback_submission_id)
+                    VALUES (%s, 'submitted', %s)
+                    """,
+                    (admin_id, submission_id),
+                )
+                cur.execute(
+                    "UPDATE runner_signals SET feedback_submission_id = %s WHERE id = %s",
+                    (submission_id, signal_id),
+                )
+            conn.commit()
+        logger.info(f"✓ Signal accepted: signal_id={signal_id}, submission_id={submission_id}")
+        return submission_id
+
+    @staticmethod
+    def dismiss_signal(signal_id: UUID) -> bool:
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE runner_signals SET status = 'dismissed', status_changed_at = now()
+                    WHERE id = %s AND status = 'suggested'
+                    """,
+                    (signal_id,),
+                )
+                applied = cur.rowcount == 1
+            conn.commit()
+        return applied
+
+    @staticmethod
+    def is_signal_submission(submission_id: UUID) -> bool:
+        """True if the submission was created from an accepted runner signal (a held plan)."""
+        conn = get_connection()
+        with closing(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM runner_signals WHERE feedback_submission_id = %s", (submission_id,)
+                )
+                return cur.fetchone() is not None
 
     @staticmethod
     def get_feedback(filters=None):

@@ -36,6 +36,7 @@ from clarify import (
     record_answer,
 )
 import reminders
+import signals_events
 from reminders import ReminderLimitExceededError, ReminderParseError, ReminderService
 from dotenv import load_dotenv
 load_dotenv()
@@ -77,6 +78,9 @@ async def _reply(message, text: str, **kwargs) -> bool:
             if not _retryable(exc) or attempt == len(_REPLY_DELAYS):
                 logger.warning("Reply not delivered after %d attempt(s): %s: %s",
                                attempt + 1, type(exc).__name__, exc)
+                chat_id = getattr(message, "chat_id", None)
+                signals_events.record("reply_failed", exc, user=chat_id,
+                                      location=signals_events.caller_facts())
                 return False
             await _sleep(_REPLY_DELAYS[attempt])
     return False
@@ -543,7 +547,7 @@ async def clarification_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     raise ApplicationHandlerStop
 
 
-RUN_DECISIONS = {"m": "merge", "r": "reject"}
+RUN_DECISIONS = {"m": "merge", "r": "reject", "b": "build"}
 RUN_NOTE_PROMPT_TEXT = "Reply to this message with the changes you want."
 
 
@@ -567,7 +571,8 @@ async def runner_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             FeedbackService.set_auto_run_decision, run_id, RUN_DECISIONS[action]
         )
         await query.answer(
-            "Queued; the runner acts within an hour." if applied else "This run is not awaiting a decision."
+            ("The build starts within an hour." if action == "b" else "Queued; the runner acts within an hour.")
+            if applied else "This run is not awaiting a decision."
         )
         if applied:
             await query.edit_message_reply_markup(reply_markup=None)
@@ -587,6 +592,34 @@ async def runner_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     else:
         await query.answer()
+
+
+async def signal_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin taps 📋 Plan a fix / 🙈 Dismiss on a runner 💡 suggestion."""
+    query = update.callback_query
+    await query.answer()  # first: a late answer fails with "Query is too old"
+    try:
+        admin_id = get_admin_user_id()
+    except RuntimeError as exc:
+        logger.warning("Ignoring signal decision: %s", exc)
+        return
+    parsed = _parse_callback(query.data)
+    if query.from_user.id != admin_id or parsed is None:
+        return
+    signal_id, action = parsed
+    if action == "p":
+        submission_id = await asyncio.to_thread(FeedbackService.accept_signal, signal_id, admin_id)
+        outcome = "📋 Queued as feedback. You'll get the plan and its impact before anything is built." \
+            if submission_id else "Already handled."
+    elif action == "d":
+        dismissed = await asyncio.to_thread(FeedbackService.dismiss_signal, signal_id)
+        outcome = "🙈 Dismissed for 7 days." if dismissed else "Already handled."
+    else:
+        return
+    try:
+        await query.edit_message_text(f"{query.message.text}\n\n{outcome}", reply_markup=None)
+    except TelegramError as exc:
+        logger.warning("Could not update the suggestion message: %s", exc)
 
 
 async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -628,12 +661,14 @@ async def _post_init(application: Application) -> None:
 
 
 async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log handler and polling errors. `update` is None for polling errors, so it is not used."""
+    """Log handler and polling errors. `update` is None for polling errors."""
     err = context.error
     if isinstance(err, TelegramError) and _retryable(err):
         logger.warning("Telegram network error: %s: %s", type(err).__name__, err)
     else:
         logger.error("Unhandled error", exc_info=err)
+        user = getattr(getattr(update, "effective_user", None), "id", None)
+        signals_events.record("unhandled", err, user=user)
 
 
 def build_application(token: str) -> Application:
@@ -688,6 +723,7 @@ def main() -> None:
         group=-2,
     )
     application.add_handler(CallbackQueryHandler(runner_decision, pattern=r"^run:"))
+    application.add_handler(CallbackQueryHandler(signal_decision, pattern=r"^sig:"))
     application.add_handler(CallbackQueryHandler(clarification_approval, pattern=r"^apv:"))
     application.add_handler(CallbackQueryHandler(clarification_answer, pattern=r"^clr:"))
     application.add_handler(CommandHandler("start", start))

@@ -7,16 +7,17 @@ happens here, in the trusted process. Agents only ever run sandboxed (runner/age
 passing isolation self-test (runner/selftest.py).
 """
 
+import json
 import logging
 import os
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from clarify import get_admin_user_id
-from runner import agent, notify, refs, selftest, snapshot, testdb, validate, verify
+from runner import agent, notify, refs, selftest, signals, snapshot, testdb, validate, verify
 from runner import workspace as ws
 from runner.config import Config, load_config, load_main_secrets, read_token
 from storage import ClarificationError, FeedbackService
@@ -140,10 +141,22 @@ def do_plan(config: Config, session: Session, run: dict, submission: dict) -> st
         out = validate.validate_plan(ws.read_output(path), config, ref)
     except validate.OutputError as e:
         return fail(run, f"PLAN failed: {e}\n\nAgent said: {result.text[-800:]}")
-    FeedbackService.update_auto_run(run["id"], stage="planned", change_name=out["change_name"], last_error=None)
+    plan = json.dumps({"summary": out["summary"], "impact": out["impact"]})
+    FeedbackService.update_auto_run(run["id"], stage="planned", change_name=out["change_name"],
+                                    plan_summary=plan, plan_message_id=None, last_error=None)
     run = refresh(run)
-    notify.planned(run, submission, out["summary"])
+    if FeedbackService.is_signal_submission(run["feedback_submission_id"]):
+        return send_held_plan(run, submission)
+    notify.planned(run, submission, out["summary"], out["impact"])
     return do_build(config, session, run, submission)
+
+
+def send_held_plan(run: dict, submission: dict) -> str:
+    """Runner-suggested work waits after PLAN for ▶️ Build / ❌ Drop (design D12)."""
+    plan = json.loads(run["plan_summary"])
+    message_id = notify.planned(run, submission, plan["summary"], plan["impact"], gated=True)
+    FeedbackService.update_auto_run(run["id"], plan_message_id=message_id)
+    return "waiting"
 
 
 def do_build(config: Config, session: Session, run: dict, submission: dict) -> str:
@@ -155,6 +168,9 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     payload = {"submission": submission, "change_name": run["change_name"]}
     if run.get("decision_note"):
         payload["admin_note"] = run["decision_note"]
+    # No decision outlives the BUILD it led to (e.g. ▶️ Build), so none can leak into the 🔀 stage.
+    # The note stays: build retries keep using the admin's 💬 instructions.
+    FeedbackService.update_auto_run(run["id"], decision=None)
     ws.write_input(path, payload)
     ws.clear_output(path)
     prompt = render_prompt(config, "build.md", BRANCH=run["branch"], CHANGE_NAME=run["change_name"])
@@ -286,6 +302,14 @@ def handle_inflight(config: Config, session: Session, run: dict) -> str:
         return "waiting"
     if stage == "planning":
         return guarded(do_plan, run, config, session, run, submission)
+    if stage == "planned" and FeedbackService.is_signal_submission(run["feedback_submission_id"]):
+        if decision == "reject":
+            return reject_path(config, run, submission)
+        if decision == "build":
+            return guarded(do_build, run, config, session, run, submission)
+        if run.get("plan_message_id") is None and run.get("plan_summary"):
+            return send_held_plan(run, submission)  # the 📋 was lost: ask again
+        return "waiting"
     if stage in ("planned", "building"):
         return guarded(do_build, run, config, session, run, submission)
     return "noop"
@@ -308,8 +332,19 @@ def start_new(config: Config, session: Session, submission: dict, now: float) ->
     return guarded(do_plan, run, config, session, run, submission)
 
 
+def scan_signals(config: Config, now: float) -> None:
+    """Runner signals first in every tick; a failure here never blocks the rest (design D7)."""
+    try:
+        stats = signals.scan(config, datetime.fromtimestamp(now, timezone.utc))
+        log.info("signals: %(read)d events read, %(dropped)d dropped, %(suggested)d suggested, "
+                 "%(reset)d reset, %(dismissed)d dismissed", stats)
+    except Exception:
+        log.exception("signals: scan failed")
+
+
 def tick(config: Config, now: float = None) -> str:
     now = time.time() if now is None else now
+    scan_signals(config, now)
     session = Session(config)
     run = FeedbackService.get_inflight_auto_run()
     if run is not None:

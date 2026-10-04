@@ -17,6 +17,8 @@
         <string>{{PATH}}</string>
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>
+        <key>SEB_SIGNALS_FILE</key>
+        <string>{{HOME}}/.seb-runner/logs/signals.jsonl</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

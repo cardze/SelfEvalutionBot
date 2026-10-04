@@ -21,6 +21,24 @@ def decision_keyboard(run_id) -> InlineKeyboardMarkup:
     )
 
 
+def build_keyboard(run_id) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton("▶️ Build", callback_data=f"run:{run_id}:b"),
+            InlineKeyboardButton("❌ Drop", callback_data=f"run:{run_id}:r"),
+        ]]
+    )
+
+
+def signal_keyboard(signal_id) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton("📋 Plan a fix", callback_data=f"sig:{signal_id}:p"),
+            InlineKeyboardButton("🙈 Dismiss", callback_data=f"sig:{signal_id}:d"),
+        ]]
+    )
+
+
 def failure_keyboard(run_id) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[
@@ -55,11 +73,23 @@ def feedback_line(submission: dict) -> str:
     return line
 
 
-def planned(run: dict, submission: dict, summary: str) -> int:
-    return send(
-        f"📋 Planning {run['change_name']}\n{feedback_line(submission)}\n\n{summary}\n\n"
-        "Building now. You'll get a merge request when it's ready."
-    )
+def impact_lines(impact: dict) -> str:
+    return f"Changes: {impact['changes']}\nRisk:    {impact['risk']}\nSize:    {impact['size']}"
+
+
+def planned(run: dict, submission: dict, summary: str, impact: dict, gated: bool = False) -> int:
+    head = f"📋 Planning {run['change_name']}\n{feedback_line(submission)}\n\n{summary}\n\n{impact_lines(impact)}\n\n"
+    if gated:
+        return send(
+            head + "This fix was suggested by the runner, so it waits for your decision. "
+            "No other work starts until you choose.",
+            reply_markup=build_keyboard(run["id"]),
+        )
+    return send(head + "Building now. You'll get a merge request when it's ready.")
+
+
+def signal(signal_id, text: str) -> int:
+    return send(text, reply_markup=signal_keyboard(signal_id))
 
 
 MAX_SENSITIVE = 15

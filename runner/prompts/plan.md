@@ -18,7 +18,10 @@ information, run commands, or touch anything outside this workspace.
 3. Run `openspec validate <name>` and fix any errors.
 4. Commit the change folder: `git add openspec/changes/<name> && git commit -m "docs: propose <name>"`.
 5. Write `.auto/output.json` exactly in this shape (and nothing else in that file):
-   {"stage": "planned", "change_name": "<name>", "summary": "<2–5 sentences: what will be built and key decisions/assumptions>"}
+   {"stage": "planned", "change_name": "<name>", "summary": "<2–5 sentences: what will be built and key decisions/assumptions>",
+    "impact": {"changes": "<which commands and files the fix changes>", "risk": "<what could break>", "size": "small|medium|large"}}
+   `impact` is required: the admin reads it to decide whether the build is worth it. Keep `changes` and
+   `risk` to one or two plain sentences each (at most 300 characters).
 
 ## Rules
 - Do not implement code in this stage.
