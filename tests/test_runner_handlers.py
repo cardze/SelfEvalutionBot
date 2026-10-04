@@ -138,3 +138,68 @@ def test_unmatched_reply_passes_through(store):
     update = SimpleNamespace(message=message, effective_user=SimpleNamespace(id=ADMIN_ID))
     _run(bot.runner_note_reply, update)  # falls through to the clarification handler
     assert message.replies == []
+
+
+# ---------- ▶️ Build and 💡 suggestions (add-runner-signals) ----------
+
+
+def test_build_tap_records_build(store):
+    run_id = uuid4()
+    query = FakeQuery(f"run:{run_id}:b", ADMIN_ID)
+    _run(bot.runner_decision, SimpleNamespace(callback_query=query))
+    assert store.calls[0] == ("decide", (run_id, "build"), {})
+    assert query.answers == ["The build starts within an hour."] and query.markup_cleared
+
+
+class SignalQuery(FakeQuery):
+    def __init__(self, data, user_id):
+        super().__init__(data, user_id)
+        self.message = SimpleNamespace(text="💡 /meal sometimes fails for users")
+        self.edited = None
+
+    async def edit_message_text(self, text, reply_markup=None, **kwargs):
+        self.edited = text
+
+
+@pytest.fixture
+def signal_store(monkeypatch):
+    calls = []
+    state = {"accepted": uuid4(), "dismissed": True}
+    monkeypatch.setenv("ADMIN_USER_ID", str(ADMIN_ID))
+    monkeypatch.setattr(bot.FeedbackService, "accept_signal",
+                        lambda sid, admin: calls.append(("accept", sid, admin)) or state["accepted"])
+    monkeypatch.setattr(bot.FeedbackService, "dismiss_signal",
+                        lambda sid: calls.append(("dismiss", sid)) or state["dismissed"])
+    return SimpleNamespace(calls=calls, state=state)
+
+
+def test_plan_a_fix(signal_store):
+    signal_id = uuid4()
+    query = SignalQuery(f"sig:{signal_id}:p", ADMIN_ID)
+    _run(bot.signal_decision, SimpleNamespace(callback_query=query))
+    assert signal_store.calls == [("accept", signal_id, ADMIN_ID)]
+    assert query.answers == [None]  # answered first, before any database work
+    assert query.edited.startswith("💡 /meal sometimes fails for users\n\n📋 Queued as feedback")
+
+
+def test_dismiss(signal_store):
+    signal_id = uuid4()
+    query = SignalQuery(f"sig:{signal_id}:d", ADMIN_ID)
+    _run(bot.signal_decision, SimpleNamespace(callback_query=query))
+    assert signal_store.calls == [("dismiss", signal_id)]
+    assert query.edited.endswith("🙈 Dismissed for 7 days.")
+
+
+def test_already_handled(signal_store):
+    signal_store.state["accepted"] = None
+    query = SignalQuery(f"sig:{uuid4()}:p", ADMIN_ID)
+    _run(bot.signal_decision, SimpleNamespace(callback_query=query))
+    assert query.edited.endswith("Already handled.")
+
+
+@pytest.mark.parametrize("data", [f"sig:{uuid4()}:p", "sig:not-a-uuid:p", f"sig:{uuid4()}:x"])
+def test_signal_taps_ignored(signal_store, data):
+    user = 999 if data.endswith(":p") and "not-a-uuid" not in data else ADMIN_ID
+    query = SignalQuery(data, user)
+    _run(bot.signal_decision, SimpleNamespace(callback_query=query))
+    assert signal_store.calls == [] and query.edited is None and query.answers == [None]

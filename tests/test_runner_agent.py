@@ -80,8 +80,33 @@ def test_validate_plan(setup):
     _git(workspace, "add", "-A")
     _git(workspace, "commit", "-q", "-m", "plan")
     ref = refs.fetch(config, workspace, SUB)
-    assert validate.validate_plan({"stage": "planned", "change_name": "add-x", "summary": " s "}, config, ref) == {
-        "change_name": "add-x", "summary": "s"}
+    impact = {"changes": " /meal in bot.py ", "risk": "none", "size": "small"}
+    assert validate.validate_plan({"stage": "planned", "change_name": "add-x", "summary": " s ", "impact": impact},
+                                  config, ref) == {
+        "change_name": "add-x", "summary": "s",
+        "impact": {"changes": "/meal in bot.py", "risk": "none", "size": "small"}}
+
+
+@pytest.mark.parametrize("impact", [
+    None,
+    "small",
+    {"changes": "x", "risk": "y"},
+    {"changes": "x", "risk": "y", "size": "huge"},
+    {"changes": "", "risk": "y", "size": "small"},
+    {"changes": "x", "risk": "y" * 301, "size": "small"},
+])
+def test_validate_plan_requires_valid_impact(setup, impact):
+    config, workspace = setup
+    (workspace / "openspec/changes/add-x").mkdir(parents=True)
+    (workspace / "openspec/changes/add-x/tasks.md").write_text("- [ ] 1.1 do it\n")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-q", "-m", "plan")
+    ref = refs.fetch(config, workspace, SUB)
+    data = {"stage": "planned", "change_name": "add-x", "summary": "s"}
+    if impact is not None:
+        data["impact"] = impact
+    with pytest.raises(validate.OutputError, match="impact"):
+        validate.validate_plan(data, config, ref)
 
 
 def test_validate_build_requires_commits(setup):

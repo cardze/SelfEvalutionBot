@@ -90,6 +90,44 @@ CREATE TABLE IF NOT EXISTS auto_runs (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_runs_single_flight
     ON auto_runs ((true)) WHERE stage NOT IN ('merged', 'rejected');
 
+-- Plan held for ▶️ Build / ❌ Drop on runner-suggested work (add-runner-signals)
+ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS plan_summary TEXT;
+ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS plan_message_id BIGINT;
+ALTER TABLE auto_runs DROP CONSTRAINT IF EXISTS auto_runs_decision_check;
+ALTER TABLE auto_runs ADD CONSTRAINT auto_runs_decision_check
+    CHECK (decision IN ('merge', 'reject', 'changes', 'build'));
+
+-- Problems the bot recorded in its events file, suggested to the admin (see runner/signals.py)
+CREATE TABLE IF NOT EXISTS runner_signals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    fingerprint VARCHAR(300) NOT NULL UNIQUE,
+    kind VARCHAR(30) NOT NULL CHECK (kind IN ('unhandled', 'reply_failed', 'reminder_failed')),
+    exc VARCHAR(101) NOT NULL,
+    file VARCHAR(200),
+    func VARCHAR(100),
+    last_line INT,
+    known_cause VARCHAR(50),
+    occurrences INT NOT NULL DEFAULT 0,
+    first_seen TIMESTAMPTZ NOT NULL,
+    last_seen TIMESTAMPTZ NOT NULL,
+    recent JSONB NOT NULL DEFAULT '[]',
+    users JSONB NOT NULL DEFAULT '[]',
+    status VARCHAR(20) NOT NULL DEFAULT 'observed'
+        CHECK (status IN ('observed', 'suggested', 'accepted', 'dismissed')),
+    status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    summary TEXT,
+    suggested_at TIMESTAMPTZ,
+    message_id BIGINT,
+    feedback_submission_id UUID REFERENCES feedback_submissions(id) ON DELETE SET NULL
+);
+
+-- The runner's exact position in the events file (single row)
+CREATE TABLE IF NOT EXISTS runner_signal_cursor (
+    id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+    inode BIGINT NOT NULL,
+    byte_offset BIGINT NOT NULL
+);
+
 -- One-time reminders and repeating notices (see reminders.py)
 CREATE TABLE IF NOT EXISTS reminders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
