@@ -37,8 +37,12 @@ user-influenced text in front of a model).
 
 ### D2. Structured event file written by the bot
 New module `signals_events.py` (repo root, imported by `bot.py` and `reminders.py`) appends one
-JSON object per line to `SIGNALS_FILE` (env `SEB_SIGNALS_FILE`, default
-`~/.seb-runner/logs/signals.jsonl`). Every field is computed from objects, never from message text:
+JSON object per line to the file named by env `SEB_SIGNALS_FILE`. **There is no default: when the
+variable is unset, nothing is written.** It is set only in the bot's launchd plist
+(`runner/launchd/com.seb.bot.plist.template` → `{{HOME}}/.seb-runner/logs/signals.jsonl`), so test
+runs — developer `pytest`, the sandboxed verification, and `testdb.run_full_suite` after ✅, which
+runs outside the sandbox with the real `HOME` — never write events. Every field is computed from
+objects, never from message text:
 
 ```json
 {"v": 1, "ts": "2026-10-04T03:44:10.123+00:00", "kind": "unhandled",
@@ -51,7 +55,9 @@ JSON object per line to `SIGNALS_FILE` (env `SEB_SIGNALS_FILE`, default
   `reminders._deliver_due` when a send fails).
 - `exc`: `f"{type(e).__module__}.{type(e).__qualname__}"` (`builtins.` dropped).
 - `file` / `func` / `line`: the deepest frame of `traceback.extract_tb(e.__traceback__)` whose path
-  is inside the repository root and not under any `site-packages`; `file` is relative to the root.
+  is inside the repository root — `Path(signals_events.__file__).resolve().parent`, never the
+  current directory — and not under any `site-packages` or `tests/`; `file` is relative to the
+  root.
   For `reply_failed` the frame is the caller of `_reply` (`sys._getframe(1)`), e.g.
   `feedback_bug`. Omitted when no in-repo frame exists.
 - `user`: `update.effective_user.id` for `unhandled`; `message.chat_id` for `reply_failed`; the
@@ -68,8 +74,8 @@ JSON object per line to `SIGNALS_FILE` (env `SEB_SIGNALS_FILE`, default
 - valid JSON object with `v == 1` and `kind` in the three kinds;
 - `ts` parses as an ISO timestamp **with** an offset and is not in the future (+5 min slack);
 - `exc` matches `^[A-Za-z_][\w.]{0,100}$`;
-- if present: `file` is a path tracked by git on `main` in `<MAIN>` (`git ls-files`), not under
-  `site-packages`; `func` matches `^\w{1,100}$` **and** `def <func>(` / `async def <func>(` occurs in
+- if present: `file` is a path tracked by git on `main` in `<MAIN>` (`git ls-tree --name-only
+  main -- <file>`), not under `site-packages` or `tests/`; `func` matches `^\w{1,100}$` **and** `def <func>(` / `async def <func>(` occurs in
   that file on `main` (`git show main:<file>`); `line` is a positive int; `user` is an int ≥ 0;
 - `known_cause`, if present, is a key of `KNOWN_CAUSES`.
 Fingerprints: `unhandled:<exc>:<file>:<func>`, `reply_failed:<exc>:<func>`, `reminder_failed:<exc>`.
@@ -195,7 +201,8 @@ feedback triggers runs" still holds.
 ```
 `validate.validate_plan` requires `impact` (`size` in the three values; `changes` / `risk`
 non-empty strings ≤ 300 characters); missing or invalid fails PLAN. The runner stores the summary
-and impact in `auto_runs.plan_summary`. `notify.planned` shows them for every run:
+and impact together in `auto_runs.plan_summary`
+as JSON (`{"summary": …, "impact": {…}}`), so a resent 📋 shows both. `notify.planned` shows them for every run:
 ```
 Changes: …
 Risk:    …
@@ -225,6 +232,8 @@ decide the goal.
 
 ## Risks / Trade-offs
 
+- [Plist not re-rendered after merge] → `SEB_SIGNALS_FILE` is unset, so no events and no
+  signals, silently. The migration step says so; the runner logs "no events file" each tick.
 - [Events file not writable] → No signals; the bot is unaffected. The runner logs "no events
   file" once per tick at debug level.
 - [Noisy signals] → Thresholds, one open suggestion per fingerprint, 3 per day, 7-day snooze.
@@ -239,6 +248,8 @@ decide the goal.
 
 ## Migration Plan
 
-Schema changes are idempotent and run at bot start (`db.init_database`). Merge, restart the bot
-(it starts writing `signals.jsonl`); the next tick creates the cursor at the file's end. Rollback:
+Schema changes are idempotent and run at bot start (`db.init_database`). Merge, then re-render
+and reload the launchd agents (`runner/setup.sh install-agents`) so the bot gets
+`SEB_SIGNALS_FILE` and starts writing `signals.jsonl`; the next tick creates the cursor at the
+file's end. Rollback:
 revert the merge; the unused tables, columns and file are harmless.

@@ -17,6 +17,14 @@ text SHALL NOT be written. Writing SHALL never raise into the bot.
 - **WHEN** an exception message contains newlines and text shaped like a log record or an event
 - **THEN** exactly one event line is written for that error, and it contains none of that text
 
+#### Scenario: Events file not configured
+- **WHEN** the events file is not configured (as in any test run)
+- **THEN** nothing is written
+
+#### Scenario: Test frames are never recorded
+- **WHEN** an error's deepest in-repository frame is in a file under `tests/`
+- **THEN** that frame is not used as the event's location
+
 #### Scenario: Events file not writable
 - **WHEN** the events file's directory does not exist or cannot be written
 - **THEN** the bot continues normally and no exception reaches the handler
@@ -29,7 +37,7 @@ text SHALL NOT be written. Writing SHALL never raise into the bot.
 The runner SHALL read signals only from the events file and SHALL accept an event only if it is a
 valid JSON object of a known kind and version, its timestamp has a timezone and is not in the
 future, its exception class matches `^[A-Za-z_][\w.]{0,100}$`, its file (if any) is tracked by git
-on `main` in the main checkout and is not under `site-packages`, its function (if any) matches
+on `main` in the main checkout and is not under `site-packages` or `tests/`, its function (if any) matches
 `^\w{1,100}$` and is defined in that file on `main`, its ids are non-negative integers, and its
 known-cause key (if any) exists. Invalid events SHALL be dropped and counted. The runner SHALL NOT
 read the bot's text log. Scanning SHALL run first in every tick, SHALL NOT count against the

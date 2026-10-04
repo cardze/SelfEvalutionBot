@@ -6,15 +6,16 @@
 
 ## 2. Event writer (`signals_events.py`, `bot.py`, `reminders.py`)
 
-- [ ] 2.1 `signals_events.py`: `KNOWN_CAUSES` (key → exc, exact message, explanation), `exception_facts(exc)` (class, deepest in-repo non-site-packages frame), `known_cause(exc)`, `record(kind, …)` appending one `json.dumps` line to `SEB_SIGNALS_FILE`, swallowing `OSError`
+- [ ] 2.1 `signals_events.py`: `KNOWN_CAUSES` (key → exc, exact message, explanation), `exception_facts(exc)` (class, deepest in-repo non-site-packages frame), `known_cause(exc)`, `record(kind, …)` appending one `json.dumps` line to `SEB_SIGNALS_FILE` only when it is set (no default), swallowing `OSError`; repo root = `Path(__file__).resolve().parent`; skip `site-packages` and `tests/` frames
 - [ ] 2.2 `bot._on_error`: record `unhandled` (with `effective_user.id`) for non-retryable errors only
 - [ ] 2.3 `bot._reply`: record `reply_failed` with the caller's frame and `message.chat_id` when it gives up
 - [ ] 2.4 `reminders._deliver_due`: record `reminder_failed` with the reminder's `user_id` when a send fails
+- [ ] 2.5 `runner/launchd/com.seb.bot.plist.template`: set `SEB_SIGNALS_FILE` to `{{HOME}}/.seb-runner/logs/signals.jsonl`
 
 ## 3. Runner detection and impact (`runner/signals.py`)
 
 - [ ] 3.1 Reader: DB cursor, first run at EOF, rotation/truncation reset, 5 MB cap, complete lines only
-- [ ] 3.2 Validation (D3): JSON shape, kind, version, timezone-aware non-future `ts`, `exc` pattern, file tracked on `main`, function defined in that file on `main`, integer ids, known-cause key; drop and count invalid events
+- [ ] 3.2 Validation (D3): JSON shape, kind, version, timezone-aware non-future `ts`, `exc` pattern, file tracked on `main` (`git ls-tree`) and not under `tests/`, function defined in that file on `main`, integer ids, known-cause key; drop and count invalid events
 - [ ] 3.3 Fingerprints and thresholds (1 for `unhandled`; 3 in 24 h for the others)
 - [ ] 3.4 Handler map from `main:bot.py` (`CommandHandler`, `ConversationHandler` members → entry command, `CallbackQueryHandler` prefixes), `reminders.py` → reminder delivery, fallback "internal code"
 - [ ] 3.5 Renderer: headline, Impact / Who / Cause / Where lines and the submission texts (D8, D9)
@@ -24,7 +25,7 @@
 - [ ] 4.1 `tick()`: scan → record → settle accepted → suggest (cap 3 / 24 h) first, wrapped so failures never block the tick; one summary line per tick
 - [ ] 4.2 `prompts/plan.md` asks for `impact`; `validate.validate_plan` requires and validates it
 - [ ] 4.3 `notify.planned(run, submission, summary, impact, gated)`: impact lines for all runs; gated variant with ▶️ Build / ❌ Drop and the "queue waits" note; returns the message id
-- [ ] 4.4 `do_plan`: store `plan_summary`; gated runs stop at `planned` and store `plan_message_id`
+- [ ] 4.4 `do_plan`: store summary + impact as JSON in `plan_summary`; gated runs stop at `planned` and store `plan_message_id`
 - [ ] 4.5 `handle_inflight` on `planned`: gated → resend if `plan_message_id` is NULL, `build` → BUILD, `reject` → reject path, else `waiting`; non-gated → BUILD
 - [ ] 4.6 `do_build` clears `decision` / `decision_note` as it starts (after reading the note)
 - [ ] 4.7 `notify.signal(signal)`: 💡 message with 📋 / 🙈 (`sig:<id>:p|d`)
@@ -36,13 +37,14 @@
 
 ## 6. Tests
 
-- [ ] 6.1 Event writer: fields from a real exception (class, deepest repo frame, site-packages skipped, chained exception uses its own traceback, no-message exception); known-cause keys; newline/forged text in the message never written and produces exactly one line; unwritable path swallowed; polling errors not recorded
-- [ ] 6.2 Validation: forged function not defined in the file, untracked file, site-packages path, bad `exc`, naive or future `ts`, non-integer ids, unknown known-cause key — all dropped and counted
+- [ ] 6.1 Event writer: fields from a real exception (class, deepest repo frame, site-packages skipped, chained exception uses its own traceback, no-message exception); known-cause keys; newline/forged text in the message never written and produces exactly one line; unwritable path swallowed; nothing written when `SEB_SIGNALS_FILE` is unset; `tests/` frames skipped; polling errors not recorded
+- [ ] 6.2 Validation: forged function not defined in the file, untracked file, site-packages path, `tests/` path, bad `exc`, naive or future `ts`, non-integer ids, unknown known-cause key — all dropped and counted
 - [ ] 6.3 Reader and cursor (DB): first run at EOF, rotation, truncation, partial line, 5 MB cap at a line boundary, crash before commit records events exactly once
 - [ ] 6.4 Impact rendering against the current `bot.py`: `/meal`, `/feedback` for `feedback_bug`, `run:` label, reminder delivery, internal fallback, known vs no cause, users unknown; exception message never appears
 - [ ] 6.5 Lifecycle (DB): thresholds, 24 h window, one open suggestion, daily cap ordered by `first_seen`, dismiss snooze needs new occurrences, double-tap accept gives one submission, resolved → observed reset, wont_do → dismissed
 - [ ] 6.6 Decisions (DB): `build` only in `planned` on gated runs, `reject` in `planned` only when gated, `merge` never in `planned`
 - [ ] 6.7 Stages: gated run stops at `planned` with no BUILD; lost 📋 resent; ▶️ → BUILD; ❌ → `REJECTED.md` + `wont_do`; failed gated PLAN + 💬 re-plans and stops again; non-gated runs unchanged; scan raising still starts work
 - [ ] 6.8 PLAN impact: missing / invalid / over-long `impact` fails; impact shown in 📋; update fake PLAN outputs in `tests/test_runner_stages.py` and `tests/test_runner_agent.py`
-- [ ] 6.9 Bot: `sig:` non-admin ignored, accept, dismiss, already handled; `run:<id>:b`
-- [ ] 6.10 Run the full test suite (with a throwaway database) and confirm it passes
+- [ ] 6.9 The rendered bot plist contains `SEB_SIGNALS_FILE`; the runner plist does not
+- [ ] 6.10 Bot: `sig:` non-admin ignored, accept, dismiss, already handled; `run:<id>:b`
+- [ ] 6.11 Run the full test suite (with a throwaway database) and confirm it passes
