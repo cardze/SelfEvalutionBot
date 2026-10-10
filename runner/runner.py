@@ -240,19 +240,62 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
     git_main(config, "add", "-A", "openspec")
     git_main(config, "commit", "-q", "-m", f"chore: archive {name} and sync specs")
     FeedbackService.resolve_submission(run["feedback_submission_id"])
-    subprocess.run([str(config.bot_python), "-m", "pip", "install", "--quiet", "-r",
-                    str(config.main / "requirements.txt")], check=True, capture_output=True)
-    restart = subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.seb.bot"],
-                             capture_output=True, text=True)
+    install_requirements(config)
+    restart = None
+    if config.bot_service == "launchd":
+        restart = subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.seb.bot"],
+                                 capture_output=True, text=True)
     ws.remove(config, path)
     refs.delete_ref(config, run["feedback_submission_id"])
     drop_review_branch(config, run)
     FeedbackService.update_auto_run(run["id"], stage="merged", decision=None, last_error=None)
     notify.merged(refresh(run))
+    if config.bot_service == "hermes":
+        # This tick runs inside the gateway's cron scheduler: restart it only now, detached, so the
+        # restart cannot cut off this run before it is recorded as merged (design B5).
+        restart = restart_hermes_gateway(config)
     if restart.returncode != 0:
         notify.warning(f"Merged, but restarting the bot failed: {restart.stderr.strip()[:300]}. "
                        "Restart it manually.")
     return "merged"
+
+
+def bot_requirements(text: str) -> str:
+    """requirements.txt without python-telegram-bot: the Hermes gateway pins its own copy (B5)."""
+    def name(line: str) -> str:
+        return line.split("#", 1)[0].strip().split(";", 1)[0].split("[", 1)[0]
+    keep = []
+    for line in text.splitlines():
+        base = name(line)
+        for sep in ("==", ">=", "<=", "~=", "!=", ">", "<", "="):
+            base = base.split(sep, 1)[0]
+        if base.strip().lower().replace("_", "-") != "python-telegram-bot":
+            keep.append(line)
+    return "\n".join(keep) + "\n"
+
+
+def install_requirements(config: Config) -> None:
+    """The runner's own Python always; in Hermes mode also the gateway's Python, without PTB."""
+    subprocess.run([str(config.bot_python), "-m", "pip", "install", "--quiet", "-r",
+                    str(config.main / "requirements.txt")], check=True, capture_output=True)
+    if config.bot_service != "hermes":
+        return
+    filtered = config.runner_home / "hermes-requirements.txt"
+    filtered.write_text(bot_requirements((config.main / "requirements.txt").read_text()))
+    subprocess.run([str(config.hermes_python), "-m", "pip", "install", "--quiet", "-r", str(filtered)],
+                   check=True, capture_output=True)
+
+
+def restart_hermes_gateway(config: Config) -> subprocess.CompletedProcess:
+    """Start `hermes -p <profile> gateway restart` in its own session; it outlives this tick."""
+    cmd = ["sh", "-c", 'sleep 5; exec "$0" "$@"', config.hermes_bin, "-p", config.hermes_profile,
+           "gateway", "restart"]
+    try:
+        subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    except OSError as e:
+        return subprocess.CompletedProcess(cmd, 1, "", str(e))
+    return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
 def reject_path(config: Config, run: dict, submission: dict) -> str:

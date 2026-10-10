@@ -208,6 +208,40 @@ def test_merge_path(env):
     assert sub not in [r["id"] for r in FeedbackService.get_actionable_feedback(user_id=TEST_USER_ID)["actionable"]]
 
 
+def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
+    """move-bot-into-hermes B5: no launchctl; the gateway restart is detached and comes last."""
+    env.config = dataclasses.replace(env.config, bot_service="hermes", hermes_profile="seb",
+                                     hermes_python=Path("/opt/hermes/bin/python"), hermes_bin="/bin/hermes")
+    (env.config.main / "requirements.txt").write_text("python-telegram-bot==20.7\npsycopg==3.1.12\n")
+    _git(env.config.main, "commit", "-q", "-am", "reqs")
+    spawned = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, *args, **kwargs):
+        if "gateway" not in cmd:
+            return real_popen(cmd, *args, **kwargs)
+        run = FeedbackService.get_auto_run(run_id)
+        spawned.append((cmd, kwargs, run["stage"], kinds(env)[:]))
+
+    monkeypatch.setattr(rr.subprocess, "Popen", fake_popen)
+    sub = new_submission()
+    assert rr.tick(env.config) == "awaiting_decision", env.notes
+    run_id = run_row(sub)["id"]
+    FeedbackService.set_auto_run_decision(run_id, "merge")
+    assert rr.tick(env.config) == "merged"
+
+    assert ("exec", "launchctl") not in env.notes
+    pips = [c for c in env.commands if c[1:3] == ["-m", "pip"]]
+    assert [c[0] for c in pips] == ["/usr/bin/python3", "/opt/hermes/bin/python"]
+    filtered = Path(pips[1][-1]).read_text()
+    assert "python-telegram-bot" not in filtered and "psycopg==3.1.12" in filtered
+    [(cmd, kwargs, stage, notes_then)] = spawned
+    assert cmd[-5:] == ["/bin/hermes", "-p", "seb", "gateway", "restart"]
+    assert kwargs["start_new_session"] is True
+    assert stage == "merged" and "merged" in notes_then
+    assert "warning" not in kinds(env)
+
+
 def test_merge_waits_for_dirty_main(env):
     sub = new_submission()
     rr.tick(env.config)

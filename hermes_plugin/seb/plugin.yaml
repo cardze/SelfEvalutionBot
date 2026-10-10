@@ -1,0 +1,15 @@
+name: seb
+version: 1.0.0
+description: SelfEvaluationBot — the bot's Telegram commands, reminder loop and owner tools inside the Hermes gateway
+author: cardze
+license: MIT
+provides_tools:
+  - seb_feedback_queue
+  - seb_runner_status
+requires_env:
+  - name: SEB_MAIN
+    description: "Absolute path of the SelfEvaluationBot main checkout"
+python_dependencies:
+  - "psycopg>=3.1.12,<4"
+  - "python-dotenv>=1.0.0,<2"
+  - "tzdata>=2024.1,<2100"

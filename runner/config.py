@@ -9,11 +9,13 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 RUNNER_HOME = Path.home() / ".seb-runner"
 SNAPSHOT_HOME = Path.home() / ".seb-snapshot"  # must stay outside RUNNER_HOME (sandbox denies it)
 TOKEN_PREFIX = "sk-ant-oat01-"
 BACKENDS = ("claude", "hermes")
+BOT_SERVICES = ("launchd", "hermes")  # what runs the Telegram bot (move-bot-into-hermes, B5)
 DEFAULT_HERMES_HOME = Path.home() / ".hermes/profiles/seb-runner"
 
 
@@ -62,6 +64,9 @@ class Config:
     hermes_model: str = ""
     hermes_provider: str = ""
     hermes_selftest_model: str = ""
+    bot_service: str = "launchd"
+    hermes_python: Optional[Path] = None
+    hermes_profile: str = "seb"
 
     @property
     def logs_dir(self) -> Path:
@@ -105,6 +110,13 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
     if backend not in BACKENDS:
         raise ValueError(f"AGENT_BACKEND={backend!r} in {env_file}; expected one of: {', '.join(BACKENDS)}")
 
+    service = values.get("BOT_SERVICE", "launchd").strip().lower()
+    if service not in BOT_SERVICES:
+        raise ValueError(f"BOT_SERVICE={service!r} in {env_file}; expected one of: {', '.join(BOT_SERVICES)}")
+    hermes_python = values.get("HERMES_PYTHON", "").strip()
+    if service == "hermes" and not hermes_python:
+        raise ValueError(f"BOT_SERVICE=hermes in {env_file} needs HERMES_PYTHON (run hermes_profile/setup.sh cron)")
+
     base = Config(main=main, workspace_root=workspace_root, bot_python=bot_python)
     return Config(
         main=main,
@@ -122,6 +134,9 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
         hermes_model=values.get("HERMES_MODEL", ""),
         hermes_provider=values.get("HERMES_PROVIDER", ""),
         hermes_selftest_model=values.get("HERMES_SELFTEST_MODEL", ""),
+        bot_service=service,
+        hermes_python=Path(hermes_python).expanduser() if hermes_python else None,
+        hermes_profile=values.get("HERMES_PROFILE", base.hermes_profile).strip() or base.hermes_profile,
     )
 
 

@@ -517,39 +517,21 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     raise ApplicationHandlerStop
 
 
-async def _post_init(application: Application) -> None:
-    """Start the reminder delivery loop on PTB's running event loop (see design D1)."""
+def start_background(application: Application) -> None:
+    """Start the reminder delivery loop on the running event loop (see design D1).
+
+    Used by `python bot.py` (post_init) and by the Hermes plugin (hermes_bot.py) when the Hermes
+    gateway connects to Telegram.
+    """
     asyncio.create_task(reminders.delivery_loop(application.bot))
 
 
-def main() -> None:
-    # Initialize database before setting up bot
-    try:
-        db.init_database()
-    except Exception as e:
-        logger.error(str(e))
-        raise
+async def _post_init(application: Application) -> None:
+    start_background(application)
 
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
-    application = Application.builder().token(token).post_init(_post_init).build()
-
-    try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        if not loop.is_running():
-            loop.run_until_complete(setup_bot_commands(application))
-    except Exception as exc:
-        logger.warning(
-            "Skipping custom Telegram command registration: %s",
-            exc,
-        )
-
+def register_handlers(application: Application) -> None:
+    """Add every bot handler to `application` (shared by bot.py and the Hermes plugin)."""
     # Clarification replies must be checked before the /feedback conversation sees the text.
     application.add_handler(
         MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, clarification_reply),
@@ -582,6 +564,36 @@ def main() -> None:
     )
     application.add_handler(feedback_handler)
 
+
+def main() -> None:
+    # Initialize database before setting up bot
+    try:
+        db.init_database()
+    except Exception as e:
+        logger.error(str(e))
+        raise
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
+
+    application = Application.builder().token(token).post_init(_post_init).build()
+
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        if not loop.is_running():
+            loop.run_until_complete(setup_bot_commands(application))
+    except Exception as exc:
+        logger.warning(
+            "Skipping custom Telegram command registration: %s",
+            exc,
+        )
+
+    register_handlers(application)
     application.run_polling()
 
 
