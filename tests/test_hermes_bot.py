@@ -24,8 +24,13 @@ class FakeApplication:
         self.handlers = []  # (handler, group)
         self.bot = object()
 
+        self.error_handlers = []
+
     def add_handler(self, handler, group=0):
         self.handlers.append((handler, group))
+
+    def add_error_handler(self, callback):
+        self.error_handlers.append(callback)
 
 
 class FakeCtx:
@@ -73,6 +78,7 @@ def test_register_handlers_matches_bot_main():
         (("message", "clarification_reply"), -1),
         (("message", "runner_note_reply"), -2),
         (("callback", "^run:"), 0),
+        (("callback", "^sig:"), 0),
         (("callback", "^apv:"), 0),
         (("callback", "^clr:"), 0),
         (("command", ("start",)), 0),
@@ -140,7 +146,8 @@ def test_wire_telegram_inits_registers_and_starts_once(monkeypatch):
         for _ in range(2):
             app = FakeApplication()
             hermes_bot.wire_telegram(app, adapter=None)
-            assert len(app.handlers) == 12
+            assert len(app.handlers) == 13
+            assert app.error_handlers == [bot._on_error]
     asyncio.run(connect_twice())
     assert calls == ["init", "background"]
 
@@ -159,7 +166,7 @@ def test_wire_telegram_survives_db_failure(monkeypatch, caplog):
         hermes_bot.wire_telegram(app)
         return app
     app = asyncio.run(connect())
-    assert len(app.handlers) == 12
+    assert len(app.handlers) == 13
     assert "database initialization failed" in caplog.text
 
 

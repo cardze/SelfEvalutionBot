@@ -41,7 +41,7 @@ The bot's behaviour is deterministic and covered by tests; rewriting it as promp
   `CommandHandler`s and the `/feedback` `ConversationHandler` sit in group 0 ahead of Hermes's
   catch-all handlers; text that is part of a feedback conversation or a reply to a clarification /
   runner note is consumed by our handlers and never reaches the agent; everything else falls through
-  to Hermes. Callback patterns `^run:`, `^apv:`, `^clr:` are already scoped.
+  to Hermes. Callback patterns `^run:`, `^sig:`, `^apv:`, `^clr:` are already scoped. The bot's error handler is added too, so problem events still reach the runner (`SEB_SIGNALS_FILE` is set in the profile `.env`).
 - **Errors** in wiring are logged and leave Hermes running (Hermes isolates factory failures).
 - **Menu.** `register_command` for `feedback`, `calc`, `meal`, `remind`, `reminders`, `cancel`
   with short handlers for non-Telegram surfaces (`calc` and `meal` work everywhere; the others

@@ -275,7 +275,7 @@ handlers, wired into the gateway by the `seb` plugin ahead of Hermes's handlers.
 
 ```
 Telegram ─▶ Hermes gateway (profile seb)
-              ├─ seb plugin ─▶ bot.register_handlers: /feedback /remind /meal /calc, run:/apv:/clr: buttons
+              ├─ seb plugin ─▶ bot.register_handlers: /feedback /remind /meal /calc, run:/sig:/apv:/clr: buttons
               │                bot.start_background: reminder delivery
               ├─ owner's other messages ─▶ Hermes agent + seb_feedback_queue / seb_runner_status
               └─ cron seb-runner (hourly) ─▶ runner/run.sh ─▶ PLAN ▸ BUILD ▸ 🔀 merge request

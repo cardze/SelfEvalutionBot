@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from psycopg.rows import dict_row
 
+import signals_events
 from db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,7 @@ async def _deliver_due(bot) -> None:
             await bot.send_message(chat_id=row["chat_id"], text="Reminder: " + row["message_text"])
         except Exception as exc:
             logger.error("Failed to deliver reminder %s: %s", row["id"], exc)
+            signals_events.record("reminder_failed", exc, user=row.get("user_id"))
             continue
         try:
             if row["is_recurring"]:

@@ -73,6 +73,11 @@ class Config:
         return self.runner_home / "logs"
 
     @property
+    def signals_file(self) -> Path:
+        # Same path the bot's plist sets as SEB_SIGNALS_FILE (runner/launchd/com.seb.bot.plist.template)
+        return self.logs_dir / "signals.jsonl"
+
+    @property
     def token_file(self) -> Path:
         return self.runner_home / "oauth_token"
 

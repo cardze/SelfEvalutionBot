@@ -39,6 +39,9 @@ def wire_telegram(application, adapter=None) -> None:
         except Exception:
             logger.exception("SelfEvaluationBot database initialization failed; handlers still wired")
     bot.register_handlers(application)
+    # Our error handler records problem events for the runner (add-runner-signals); Hermes's own
+    # error handlers still run.
+    application.add_error_handler(bot._on_error)
     start_background_once(application)
 
 

@@ -46,6 +46,7 @@ def _cleanup():
     conn = db.get_connection()
     with closing(conn):
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM runner_signals WHERE fingerprint LIKE 'test-stage:%%'")
             cur.execute("DELETE FROM feedback_events WHERE user_id = %s", (TEST_USER_ID,))
             cur.execute("DELETE FROM feedback_submissions WHERE user_id = %s", (TEST_USER_ID,))
         conn.commit()
@@ -112,7 +113,8 @@ def env(tmp_path, monkeypatch):
                 _git(path, "add", "openspec")
                 _git(path, "commit", "-q", "-m", "docs: propose add-x")
                 (path / ".auto/output.json").write_text(json.dumps(
-                    {"stage": "planned", "change_name": "add-x", "summary": "Plan summary"}))
+                    {"stage": "planned", "change_name": "add-x", "summary": "Plan summary",
+                     "impact": {"changes": "feature_N.py", "risk": "none", "size": "small"}}))
         else:
             e.agent_prompts.append("build")
             n = len(e.agent_prompts)
@@ -125,8 +127,18 @@ def env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(agent, "run", fake_agent)
 
-    for kind in ("planned", "merge_request", "failure", "warning", "merged", "rejected"):
-        monkeypatch.setattr(notify, kind, (lambda k: lambda *a, **kw: e.notes.append((k, a)))(kind))
+    for kind in ("planned", "merge_request", "failure", "warning", "merged", "rejected", "signal"):
+        # Each fake returns a message id, like the real ones.
+        monkeypatch.setattr(notify, kind, (lambda k: lambda *a, **kw: e.notes.append((k, a, kw)) or 1)(kind))
+    # The signal scan reads the real runner_signals table; stage tests replace it (tested on its own).
+    e.scan_error = None
+
+    def fake_scan(config, now):
+        if e.scan_error:
+            raise e.scan_error
+        return {"read": 0, "dropped": 0, "suggested": 0, "reset": 0, "dismissed": 0}
+
+    monkeypatch.setattr(rr.signals, "scan", fake_scan)
 
     real_run = subprocess.run
 
@@ -151,7 +163,7 @@ def env(tmp_path, monkeypatch):
 
 
 def kinds(e):
-    return [k for k, _ in e.notes]
+    return [n[0] for n in e.notes]
 
 
 def new_submission(text="I want reminders"):
@@ -422,5 +434,96 @@ def test_checked_out_review_branch_is_left_alone(env):
     FeedbackService.set_auto_run_decision(run_row(sub)["id"], "changes", "again")
     assert rr.tick(env.config) == "awaiting_decision"
     assert _rev(env, "review/add-x") == before
-    warnings = [a[0] for k, a in env.notes if k == "warning"]
+    warnings = [n[1][0] for n in env.notes if n[0] == "warning"]
     assert warnings and all("review/add-x is checked out" in w for w in warnings)
+
+
+# ---------- held plans for runner-suggested work (add-runner-signals) ----------
+
+
+def gated_submission():
+    """A submission created from an accepted runner signal, as 📋 Plan a fix would make it."""
+    sub = new_submission("💡 /meal sometimes fails for users")
+    conn = db.get_connection()
+    with closing(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO runner_signals (fingerprint, kind, exc, occurrences, first_seen, last_seen,
+                                            status, feedback_submission_id)
+                VALUES ('test-stage:gate', 'unhandled', 'KeyError', 1, now(), now(), 'accepted', %s)
+                """,
+                (sub,),
+            )
+        conn.commit()
+    return sub
+
+
+def planned_notes(e):
+    return [n for n in e.notes if n[0] == "planned"]
+
+
+def test_impact_is_shown_for_ordinary_runs(env):
+    new_submission()
+    rr.tick(env.config)
+    [(_, args, kwargs)] = planned_notes(env)
+    assert args[3] == {"changes": "feature_N.py", "risk": "none", "size": "small"}
+    assert not kwargs.get("gated")
+
+
+def test_gated_run_stops_after_plan(env):
+    sub = gated_submission()
+    assert rr.tick(env.config) == "waiting"
+    assert env.agent_prompts == ["plan"]
+    [(_, args, kwargs)] = planned_notes(env)
+    assert kwargs["gated"] is True and args[3]["size"] == "small"
+    run = run_row(sub)
+    assert run["stage"] == "planned" and run["plan_message_id"] == 1
+    assert rr.tick(env.config) == "waiting"     # nothing happens until a decision
+    assert env.agent_prompts == ["plan"] and len(planned_notes(env)) == 1
+
+
+def test_lost_plan_message_is_resent(env):
+    sub = gated_submission()
+    rr.tick(env.config)
+    FeedbackService.update_auto_run(run_row(sub)["id"], plan_message_id=None)
+    assert rr.tick(env.config) == "waiting"
+    assert len(planned_notes(env)) == 2 and planned_notes(env)[1][2]["gated"] is True
+    assert run_row(sub)["plan_message_id"] == 1
+
+
+def test_build_tap_builds(env):
+    sub = gated_submission()
+    rr.tick(env.config)
+    assert FeedbackService.set_auto_run_decision(run_row(sub)["id"], "build")
+    assert rr.tick(env.config) == "awaiting_decision"
+    assert env.agent_prompts == ["plan", "build"]
+    run = run_row(sub)
+    assert run["decision"] is None and kinds(env)[-1] == "merge_request"
+
+
+def test_drop_tap_rejects(env):
+    sub = gated_submission()
+    rr.tick(env.config)
+    assert FeedbackService.set_auto_run_decision(run_row(sub)["id"], "reject", "not worth it")
+    assert rr.tick(env.config) == "rejected"
+    assert env.agent_prompts == ["plan"]
+    archived = list((env.config.main / "openspec/changes/archive").glob("*-add-x"))
+    assert len(archived) == 1 and "not worth it" in (archived[0] / "REJECTED.md").read_text()
+    assert FeedbackService.get_actionable_feedback(user_id=TEST_USER_ID)["actionable"] == []
+
+
+def test_failed_gated_plan_replans_and_stops_again(env):
+    env.plan_output = False
+    sub = gated_submission()
+    assert rr.tick(env.config) == "failed"
+    FeedbackService.set_auto_run_decision(run_row(sub)["id"], "changes", "try again")
+    env.plan_output = True
+    assert rr.tick(env.config) == "waiting"
+    assert run_row(sub)["stage"] == "planned" and env.agent_prompts == ["plan", "plan"]
+
+
+def test_scan_failure_does_not_block_work(env):
+    env.scan_error = RuntimeError("events file is broken")
+    new_submission()
+    assert rr.tick(env.config) == "awaiting_decision"

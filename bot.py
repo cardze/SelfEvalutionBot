@@ -4,8 +4,16 @@ import logging
 import operator
 import os
 import random
+from urllib.parse import quote
 from uuid import UUID
-from telegram import Update, BotCommand, ForceReply
+from telegram import (
+    BotCommand,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
+from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application,
@@ -28,6 +36,7 @@ from clarify import (
     record_answer,
 )
 import reminders
+import signals_events
 from reminders import ReminderLimitExceededError, ReminderParseError, ReminderService
 from dotenv import load_dotenv
 load_dotenv()
@@ -43,6 +52,38 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Initialize storage service
 feedback_service = FeedbackService()
+
+# Waits before the 2nd and 3rd attempt of a reply that failed with a transient network error.
+_REPLY_DELAYS = (1, 3)
+# Telegram connect/read timeouts in seconds (python-telegram-bot's default is 5).
+_TELEGRAM_TIMEOUT = 10
+
+
+def _retryable(exc: TelegramError) -> bool:
+    # BadRequest subclasses NetworkError in python-telegram-bot, but retrying it cannot help.
+    return isinstance(exc, NetworkError) and not isinstance(exc, BadRequest)
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+async def _reply(message, text: str, **kwargs) -> bool:
+    """Reply, retrying transient network errors. Returns False instead of raising a TelegramError."""
+    for attempt in range(len(_REPLY_DELAYS) + 1):
+        try:
+            await message.reply_text(text, **kwargs)
+            return True
+        except TelegramError as exc:
+            if not _retryable(exc) or attempt == len(_REPLY_DELAYS):
+                logger.warning("Reply not delivered after %d attempt(s): %s: %s",
+                               attempt + 1, type(exc).__name__, exc)
+                chat_id = getattr(message, "chat_id", None)
+                signals_events.record("reply_failed", exc, user=chat_id,
+                                      location=signals_events.caller_facts())
+                return False
+            await _sleep(_REPLY_DELAYS[attempt])
+    return False
 
 STEP_BUG, STEP_SUGGESTION = range(2)
 
@@ -70,6 +111,61 @@ DEFAULT_MEALS = (
     "拉麵",
 )
 
+DEFAULT_DRINKS = (
+    "珍珠奶茶",
+    "冬瓜茶",
+    "美式咖啡",
+    "檸檬紅茶",
+    "可樂",
+    "豆漿",
+    "綠茶",
+    "柳橙汁",
+)
+
+DELUXE_PREFIXES = (
+    "皇家",
+    "至尊",
+    "黃金",
+    "帝王",
+    "米其林級",
+)
+
+DELUXE_SUFFIXES = (
+    "豪華套餐",
+    "饗宴",
+    "尊爵組合",
+    "限定套餐",
+)
+
+UBER_EATS_SEARCH_URL = "https://www.ubereats.com/tw/search?q="
+FOODPANDA_SEARCH_URL = "https://www.foodpanda.com.tw/search?q="
+
+
+def build_meal_combo(rng=random):
+    """Pick a meal and drink and build a deluxe combo name.
+
+    ``rng`` is any object exposing ``choice(seq)``; returns
+    ``(meal, drink, deluxe_name)``.
+    """
+    meal = rng.choice(DEFAULT_MEALS)
+    drink = rng.choice(DEFAULT_DRINKS)
+    prefix = rng.choice(DELUXE_PREFIXES)
+    suffix = rng.choice(DELUXE_SUFFIXES)
+    return meal, drink, f"{prefix}{meal}佐{drink}{suffix}"
+
+
+def build_order_links(meal):
+    """Build delivery-platform search links for ``meal``.
+
+    Pure helper with no network access; returns a list of ``(label, url)``
+    tuples, Uber Eats first, then foodpanda.
+    """
+    query = quote(meal, safe="")
+    return [
+        ("Uber Eats", UBER_EATS_SEARCH_URL + query),
+        ("foodpanda", FOODPANDA_SEARCH_URL + query),
+    ]
+
 
 def _eval_expr(node):
     if isinstance(node, ast.Expression):
@@ -90,7 +186,7 @@ async def setup_bot_commands(application: Application) -> None:
                 BotCommand("start", "Start here and type / for command suggestions"),
                 BotCommand("feedback", "Share feedback with the bot"),
                 BotCommand("calc", "Evaluate an arithmetic expression, e.g. /calc 2 + 3"),
-                BotCommand("meal", "Randomly pick what to eat today"),
+                BotCommand("meal", "Pick a meal + drink combo for today"),
                 BotCommand("remind", "Schedule a reminder or repeating notice"),
                 BotCommand("reminders", "List or cancel your reminders"),
                 BotCommand("cancel", "Cancel the current feedback flow"),
@@ -119,7 +215,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Show this help menu\n"
         "/feedback - Start the feedback form\n"
         "/calc - Evaluate an arithmetic expression (e.g. /calc 2 + 3)\n"
-        "/meal - Randomly pick what to eat today\n"
+        "/meal - Pick a meal + drink combo for today, with Uber Eats and foodpanda order links\n"
         "/remind - Schedule a reminder or repeating notice (e.g. /remind in 10m Take the bread out)\n"
         "/reminders - List your reminders, or /reminders cancel <id>\n"
         "/cancel - Cancel the current feedback flow\n\n"
@@ -150,7 +246,14 @@ async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def meal_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(random.choice(DEFAULT_MEALS))
+    meal, drink, deluxe_name = build_meal_combo()
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(label, url=url) for label, url in build_order_links(meal)]]
+    )
+    await update.message.reply_text(
+        f"✨ {deluxe_name}\n🍽 餐點：{meal}\n🥤 飲料：{drink}",
+        reply_markup=keyboard,
+    )
 
 
 async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -250,7 +353,8 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Record event in database (run in thread to avoid blocking)
     await asyncio.to_thread(feedback_service.record_event, user.id, "started")
     
-    await update.message.reply_text(
+    await _reply(
+        update.message,
         "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
         "What bug or current feature didn't meet your expectation?\n\n"
         "Hint: You can type /cancel anytime to stop this flow\\.",
@@ -261,7 +365,9 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def feedback_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["bug"] = update.message.text
-    await update.message.reply_text(
+    # The step follows what is saved: move on even if the Step 2 prompt could not be delivered.
+    await _reply(
+        update.message,
         "📝 *Feedback Form* \\(Step 2 of 2\\)\n\n"
         "How do you suggest fixing the bug or what new feature would you like?",
         parse_mode="MarkdownV2",
@@ -291,7 +397,9 @@ async def feedback_suggestion(
         feedback_service.record_event, user.id, "submitted", submission_id
     )
 
-    await update.message.reply_text(
+    # Stored: the form ends whether or not the thank-you gets through.
+    await _reply(
+        update.message,
         "✅ *Thank you for your feedback\\!*\n\n"
         f"*Issue reported:*\n{escape_markdown(bug, version=2)}\n\n"
         f"*Your suggestion:*\n{escape_markdown(suggestion, version=2)}\n\n"
@@ -307,7 +415,7 @@ async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Record event in database (run in thread to avoid blocking)
     await asyncio.to_thread(feedback_service.record_event, user.id, "cancelled")
     
-    await update.message.reply_text("Feedback cancelled. Feel free to use /feedback anytime.")
+    await _reply(update.message, "Feedback cancelled. Feel free to use /feedback anytime.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -435,11 +543,11 @@ async def clarification_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     if clarification is None:
         return
     reply = await record_answer(clarification, message.text, "free_text")
-    await message.reply_text(reply)
+    await _reply(message, reply)  # never raises, so the answer cannot fall through to /feedback
     raise ApplicationHandlerStop
 
 
-RUN_DECISIONS = {"m": "merge", "r": "reject"}
+RUN_DECISIONS = {"m": "merge", "r": "reject", "b": "build"}
 RUN_NOTE_PROMPT_TEXT = "Reply to this message with the changes you want."
 
 
@@ -463,7 +571,8 @@ async def runner_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             FeedbackService.set_auto_run_decision, run_id, RUN_DECISIONS[action]
         )
         await query.answer(
-            "Queued; the runner acts within an hour." if applied else "This run is not awaiting a decision."
+            ("The build starts within an hour." if action == "b" else "Queued; the runner acts within an hour.")
+            if applied else "This run is not awaiting a decision."
         )
         if applied:
             await query.edit_message_reply_markup(reply_markup=None)
@@ -483,6 +592,34 @@ async def runner_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     else:
         await query.answer()
+
+
+async def signal_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin taps 📋 Plan a fix / 🙈 Dismiss on a runner 💡 suggestion."""
+    query = update.callback_query
+    await query.answer()  # first: a late answer fails with "Query is too old"
+    try:
+        admin_id = get_admin_user_id()
+    except RuntimeError as exc:
+        logger.warning("Ignoring signal decision: %s", exc)
+        return
+    parsed = _parse_callback(query.data)
+    if query.from_user.id != admin_id or parsed is None:
+        return
+    signal_id, action = parsed
+    if action == "p":
+        submission_id = await asyncio.to_thread(FeedbackService.accept_signal, signal_id, admin_id)
+        outcome = "📋 Queued as feedback. You'll get the plan and its impact before anything is built." \
+            if submission_id else "Already handled."
+    elif action == "d":
+        dismissed = await asyncio.to_thread(FeedbackService.dismiss_signal, signal_id)
+        outcome = "🙈 Dismissed for 7 days." if dismissed else "Already handled."
+    else:
+        return
+    try:
+        await query.edit_message_text(f"{query.message.text}\n\n{outcome}", reply_markup=None)
+    except TelegramError as exc:
+        logger.warning("Could not update the suggestion message: %s", exc)
 
 
 async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -509,10 +646,11 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     applied = await asyncio.to_thread(
         FeedbackService.set_auto_run_decision, run["id"], "changes", message.text
     )
-    await message.reply_text(
+    await _reply(
+        message,
         "Noted. The runner will rebuild with your changes within an hour."
         if applied
-        else "This run is no longer awaiting a decision."
+        else "This run is no longer awaiting a decision.",
     )
     raise ApplicationHandlerStop
 
@@ -520,14 +658,36 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 def start_background(application: Application) -> None:
     """Start the reminder delivery loop on the running event loop (see design D1).
 
-    Used by `python bot.py` (post_init) and by the Hermes plugin (hermes_bot.py) when the Hermes
-    gateway connects to Telegram.
-    """
+    Shared by `main()` (via post_init) and the Hermes plugin (hermes_bot.py)."""
     asyncio.create_task(reminders.delivery_loop(application.bot))
 
 
 async def _post_init(application: Application) -> None:
     start_background(application)
+
+
+async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log handler and polling errors. `update` is None for polling errors."""
+    err = context.error
+    if isinstance(err, TelegramError) and _retryable(err):
+        logger.warning("Telegram network error: %s: %s", type(err).__name__, err)
+    else:
+        logger.error("Unhandled error", exc_info=err)
+        user = getattr(getattr(update, "effective_user", None), "id", None)
+        signals_events.record("unhandled", err, user=user)
+
+
+def build_application(token: str) -> Application:
+    application = (
+        Application.builder()
+        .token(token)
+        .connect_timeout(_TELEGRAM_TIMEOUT)
+        .read_timeout(_TELEGRAM_TIMEOUT)
+        .post_init(_post_init)
+        .build()
+    )
+    application.add_error_handler(_on_error)
+    return application
 
 
 def register_handlers(application: Application) -> None:
@@ -543,6 +703,7 @@ def register_handlers(application: Application) -> None:
         group=-2,
     )
     application.add_handler(CallbackQueryHandler(runner_decision, pattern=r"^run:"))
+    application.add_handler(CallbackQueryHandler(signal_decision, pattern=r"^sig:"))
     application.add_handler(CallbackQueryHandler(clarification_approval, pattern=r"^apv:"))
     application.add_handler(CallbackQueryHandler(clarification_answer, pattern=r"^clr:"))
     application.add_handler(CommandHandler("start", start))
@@ -577,7 +738,7 @@ def main() -> None:
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
-    application = Application.builder().token(token).post_init(_post_init).build()
+    application = build_application(token)
 
     try:
         try:

@@ -51,6 +51,8 @@ cmd_install() {
   set_profile_env TELEGRAM_ALLOWED_USERS "$admin"   # only the owner chats with the agent
   set_profile_env ADMIN_USER_ID "$admin"
   set_profile_env SEB_MAIN "$MAIN"
+  # Problem events for the runner's suggestions (same file launchd's com.seb.bot writes to).
+  set_profile_env SEB_SIGNALS_FILE "$RUNNER_HOME/logs/signals.jsonl"
   for key in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD; do
     value=$(main_env "$key"); [[ -n "$value" ]] && set_profile_env "$key" "$value"
   done
