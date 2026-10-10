@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from clarify import get_admin_user_id
-from runner import agent, notify, refs, selftest, signals, snapshot, testdb, validate, verify
+from runner import agent, hermes, notify, refs, selftest, signals, snapshot, testdb, validate, verify
 from runner import workspace as ws
 from runner.config import Config, load_config, load_main_secrets, read_token
 from storage import ClarificationError, FeedbackService
@@ -39,9 +39,14 @@ class Session:
 
     def _load(self):
         if not self._loaded:
-            self.token = read_token(self.config)
-            self.agents_json = snapshot.agents_json(self.config)
-            snapshot.export_skills(self.config)
+            if self.config.agent_backend == "hermes":
+                self.token, self.agents_json = None, None
+                hermes.ensure_profile(self.config)
+                snapshot.export_hermes_skills(self.config)
+            else:
+                self.token = read_token(self.config)
+                self.agents_json = snapshot.agents_json(self.config)
+                snapshot.export_skills(self.config)
             self._loaded = True
 
     def ensure_ready(self, workspace: Path) -> None:
@@ -57,9 +62,20 @@ class Session:
 # ---------- helpers ----------
 
 
+def backend_values(config: Config) -> dict:
+    """Commands the prompts use for Python, per backend (add-hermes-agent-backend, design H6)."""
+    if config.agent_backend == "hermes":
+        return {"VENV_SETUP": hermes.VENV_SETUP, "PYTHON": f"{hermes.VENV}/bin/python",
+                "PIP": f"{hermes.VENV}/bin/pip"}
+    return {"PYTHON": ".venv/bin/python", "PIP": ".venv/bin/pip"}
+
+
 def render_prompt(config: Config, name: str, **values) -> str:
-    text = (config.main / "runner/prompts" / name).read_text()
-    for key, value in values.items():
+    prompts = config.main / "runner/prompts"
+    text = (prompts / name).read_text()
+    if config.agent_backend == "hermes":
+        text += (prompts / "hermes.md").read_text()
+    for key, value in {**backend_values(config), **values}.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
 
@@ -96,7 +112,13 @@ def build_failed(config: Config, run: dict, error: str) -> str:
     return "retry"
 
 
-def auth_problem(run: dict) -> str:
+def auth_problem(config: Config, run: dict) -> str:
+    if config.agent_backend == "hermes":
+        FeedbackService.update_auto_run(run["id"], last_error="Hermes provider authentication failed")
+        notify.warning("Hermes provider authentication failed (API key or login expired). Re-authenticate "
+                       f"the runner profile: HERMES_HOME={config.hermes_home} hermes auth add <provider> "
+                       f"(or update the key in {config.hermes_env_file}), then run: runner/setup.sh selftest")
+        return "auth"
     FeedbackService.update_auto_run(run["id"], last_error="Claude authentication failed")
     notify.warning("Claude authentication failed (token expired or revoked). "
                    "Create a new one with `claude setup-token`, copy it, then run: runner/setup.sh store-token")
@@ -133,9 +155,9 @@ def do_plan(config: Config, session: Session, run: dict, submission: dict) -> st
     prompt = render_prompt(config, "plan.md", BRANCH=run["branch"])
     result = agent.run(config, path, prompt, config.plan, token=session.token,
                        agents_json=session.agents_json)
-    log.info("PLAN finished ok=%s cost=$%.2f", result.ok, result.cost_usd)
+    log.info("PLAN finished ok=%s cost=$%.2f backend=%s", result.ok, result.cost_usd, config.agent_backend)
     if result.auth_failed:
-        return auth_problem(run)
+        return auth_problem(config, run)
     ref = refs.fetch(config, path, run["feedback_submission_id"])
     try:
         out = validate.validate_plan(ws.read_output(path), config, ref)
@@ -176,9 +198,9 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     prompt = render_prompt(config, "build.md", BRANCH=run["branch"], CHANGE_NAME=run["change_name"])
     result = agent.run(config, path, prompt, config.build, token=session.token,
                        agents_json=session.agents_json)
-    log.info("BUILD finished ok=%s cost=$%.2f", result.ok, result.cost_usd)
+    log.info("BUILD finished ok=%s cost=$%.2f backend=%s", result.ok, result.cost_usd, config.agent_backend)
     if result.auth_failed:
-        return auth_problem(run)
+        return auth_problem(config, run)
     ref = refs.fetch(config, path, run["feedback_submission_id"])
     try:
         out = validate.validate_build(ws.read_output(path), config, ref)
@@ -234,19 +256,52 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
     git_main(config, "add", "-A", "openspec")
     git_main(config, "commit", "-q", "-m", f"chore: archive {name} and sync specs")
     FeedbackService.resolve_submission(run["feedback_submission_id"])
-    subprocess.run([str(config.bot_python), "-m", "pip", "install", "--quiet", "-r",
-                    str(config.main / "requirements.txt")], check=True, capture_output=True)
-    restart = subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.seb.bot"],
-                             capture_output=True, text=True)
+    install_requirements(config)
+    restart = None
+    if config.bot_service == "launchd":
+        restart = subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.seb.bot"],
+                                 capture_output=True, text=True)
     ws.remove(config, path)
     refs.delete_ref(config, run["feedback_submission_id"])
     drop_review_branch(config, run)
     FeedbackService.update_auto_run(run["id"], stage="merged", decision=None, last_error=None)
     notify.merged(refresh(run))
+    if config.bot_service == "hermes":
+        # This tick runs inside the gateway's cron scheduler: restart it only now, detached, so the
+        # restart cannot cut off this run before it is recorded as merged (design B5).
+        restart = restart_hermes_gateway(config)
     if restart.returncode != 0:
         notify.warning(f"Merged, but restarting the bot failed: {restart.stderr.strip()[:300]}. "
                        "Restart it manually.")
     return "merged"
+
+
+def install_requirements(config: Config) -> None:
+    """The runner's own Python always; in Hermes mode also the gateway's environment (design B5)."""
+    subprocess.run([str(config.bot_python), "-m", "pip", "install", "--quiet", "-r",
+                    str(config.main / "requirements.txt")], check=True, capture_output=True)
+    if config.bot_service != "hermes":
+        return
+    # Hermes owns its environment: refresh the plugin (its python_dependencies are generated from
+    # requirements.txt minus python-telegram-bot) and let Hermes's package manager sync it.
+    env = {**os.environ, "HERMES_PROFILE": config.hermes_profile}
+    if os.path.isabs(config.hermes_bin):  # cron's PATH may not include Hermes's launcher
+        env["PATH"] = f"{Path(config.hermes_bin).parent}:{env.get('PATH', '')}"
+    subprocess.run([str(config.main / "hermes_profile/setup.sh"), "sync"], env=env, check=True,
+                   capture_output=True)
+
+
+def restart_hermes_gateway(config: Config) -> subprocess.CompletedProcess:
+    """Restart the `seb` profile's standalone gateway (hermes_profile/setup.sh sets
+    gateway.standalone) in its own session, so it outlives this tick."""
+    cmd = ["sh", "-c", 'sleep 5; exec "$0" "$@"', config.hermes_bin, "-p", config.hermes_profile,
+           "gateway", "restart"]
+    try:
+        subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    except OSError as e:
+        return subprocess.CompletedProcess(cmd, 1, "", str(e))
+    return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
 def reject_path(config: Config, run: dict, submission: dict) -> str:

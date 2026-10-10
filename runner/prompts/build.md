@@ -16,8 +16,8 @@ changes scope or design.
 2. Have the evaluator check readiness, then have the coder implement the unchecked tasks, marking each
    `- [x]` as it is completed. Follow AGENTS.md conventions.
 3. New Python dependencies: add them to `requirements.txt` and install with
-   `.venv/bin/pip install -r requirements.txt` (only PyPI is reachable).
-4. Run the full test suite with `.venv/bin/python -m pytest -q tests`. The environment points at an
+   `{{PIP}} install -r requirements.txt` (only PyPI is reachable).
+4. Run the full test suite with `{{PYTHON}} -m pytest -q tests`. The environment points at an
    isolated, freshly reset test database. All tests must pass.
 5. Commit all work on this branch (`git add -A && git commit -m "feat: ..."`). Leave no uncommitted
    changes to tracked files.

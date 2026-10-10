@@ -1,0 +1,55 @@
+{
+  "_comment": "Rendered by the runner into $HERMES_HOME/config.yaml on every tick (JSON is valid YAML). Do not edit the rendered file; edit runner/hermes/config.template.json on main. See design H5 of add-hermes-agent-backend.",
+  "terminal": {
+    "backend": "docker",
+    "cwd": "/workspace",
+    "docker_image": "{{SANDBOX_IMAGE}}",
+    "docker_mount_cwd_to_workspace": true,
+    "docker_run_as_host_user": true,
+    "container_persistent": false,
+    "docker_persist_across_processes": false,
+    "docker_forward_env": [],
+    "docker_volumes": [],
+    "docker_network": true,
+    "docker_extra_args": ["--network={{SANDBOX_NETWORK}}"],
+    "docker_env": {
+      "HTTPS_PROXY": "http://{{EGRESS_HOST}}:3128",
+      "HTTP_PROXY": "http://{{EGRESS_HOST}}:3128",
+      "https_proxy": "http://{{EGRESS_HOST}}:3128",
+      "http_proxy": "http://{{EGRESS_HOST}}:3128",
+      "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+      "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_CONFIG_COUNT": "1",
+      "GIT_CONFIG_KEY_0": "safe.directory",
+      "GIT_CONFIG_VALUE_0": "/workspace",
+      "GIT_AUTHOR_NAME": "seb-runner",
+      "GIT_AUTHOR_EMAIL": "runner@localhost",
+      "GIT_COMMITTER_NAME": "seb-runner",
+      "GIT_COMMITTER_EMAIL": "runner@localhost"
+    },
+    "env_passthrough": []
+  },
+  "memory": {
+    "memory_enabled": false,
+    "user_profile_enabled": false,
+    "nudge_interval": 0
+  },
+  "skills": {
+    "external_dirs": [],
+    "project_discovery": false,
+    "trusted_project_dirs": [],
+    "auto_load": [],
+    "inline_shell": false
+  },
+  "curator": {
+    "enabled": false
+  },
+  "auxiliary": {
+    "background_review": {
+      "enabled": false
+    }
+  },
+  "proxy": {
+    "enabled": false
+  }
+}

@@ -220,6 +220,48 @@ def test_merge_path(env):
     assert sub not in [r["id"] for r in FeedbackService.get_actionable_feedback(user_id=TEST_USER_ID)["actionable"]]
 
 
+def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
+    """move-bot-into-hermes B5: no launchctl; the gateway restart is detached and comes last."""
+    env.config = dataclasses.replace(env.config, bot_service="hermes", hermes_profile="seb",
+                                     hermes_bin="/opt/hermes/bin/hermes")
+    spawned = []
+    synced = []
+    real_popen = subprocess.Popen
+    faked_run = rr.subprocess.run
+
+    def fake_popen(cmd, *args, **kwargs):
+        if "gateway" not in cmd:
+            return real_popen(cmd, *args, **kwargs)
+        run = FeedbackService.get_auto_run(run_id)
+        spawned.append((cmd, kwargs, run["stage"], kinds(env)[:]))
+
+    def fake_run(cmd, *args, **kwargs):
+        if str(cmd[0]).endswith("hermes_profile/setup.sh"):
+            synced.append((cmd, kwargs["env"]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return faked_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(rr.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(rr.subprocess, "run", fake_run)
+    sub = new_submission()
+    assert rr.tick(env.config) == "awaiting_decision", env.notes
+    run_id = run_row(sub)["id"]
+    FeedbackService.set_auto_run_decision(run_id, "merge")
+    assert rr.tick(env.config) == "merged"
+
+    assert ("exec", "launchctl") not in env.notes
+    pips = [c for c in env.commands if c[1:3] == ["-m", "pip"]]
+    assert [c[0] for c in pips] == ["/usr/bin/python3"]  # Hermes's own environment is never pip-installed
+    [(cmd, sync_env)] = synced
+    assert cmd == [str(env.config.main / "hermes_profile/setup.sh"), "sync"]
+    assert sync_env["HERMES_PROFILE"] == "seb" and sync_env["PATH"].startswith("/opt/hermes/bin:")
+    [(cmd, kwargs, stage, notes_then)] = spawned
+    assert cmd[-5:] == ["/opt/hermes/bin/hermes", "-p", "seb", "gateway", "restart"]
+    assert kwargs["start_new_session"] is True
+    assert stage == "merged" and "merged" in notes_then
+    assert "warning" not in kinds(env)
+
+
 def test_merge_waits_for_dirty_main(env):
     sub = new_submission()
     rr.tick(env.config)
