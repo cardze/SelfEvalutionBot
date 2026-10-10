@@ -28,7 +28,7 @@ This change builds on `add-hermes-agent-backend` (runner agent runs on Hermes in
 - The **feedback loop moves into Hermes cron**: a script-only (no-LLM) job runs `runner/run.sh`
   hourly in the `seb` profile instead of launchd `com.seb.runner`.
 - The runner gains `BOT_SERVICE=launchd|hermes`: with `hermes`, a merge installs new requirements
-  into Hermes's environment through its package manager (never touching its `python-telegram-bot`) and restarts the `seb` gateway
+  into Hermes's environment through its package manager (never touching its `python-telegram-bot`) and restarts the host Hermes gateway (which serves the `seb` profile)
   in a detached process after the run is recorded as merged.
 - Chatting with the agent stays **owner-only** (Hermes's allowlist); everyone else can use the bot's
   commands but gets a polite decline for free text, as today.

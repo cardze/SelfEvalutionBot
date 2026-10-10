@@ -256,7 +256,7 @@ def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
     assert cmd == [str(env.config.main / "hermes_profile/setup.sh"), "sync"]
     assert sync_env["HERMES_PROFILE"] == "seb" and sync_env["PATH"].startswith("/opt/hermes/bin:")
     [(cmd, kwargs, stage, notes_then)] = spawned
-    assert cmd[-5:] == ["/opt/hermes/bin/hermes", "-p", "seb", "gateway", "restart"]
+    assert cmd[-5:] == ["/opt/hermes/bin/hermes", "-p", "default", "gateway", "restart"]
     assert kwargs["start_new_session"] is True
     assert stage == "merged" and "merged" in notes_then
     assert "warning" not in kinds(env)

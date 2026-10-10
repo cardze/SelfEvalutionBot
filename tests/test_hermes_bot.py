@@ -274,10 +274,11 @@ def test_load_config_bot_service(tmp_path):
     env = tmp_path / "config.env"
     env.write_text("")
     config = load_config(env)
-    assert (config.bot_service, config.hermes_profile) == ("launchd", "seb")
-    env.write_text("BOT_SERVICE=Hermes\nHERMES_PROFILE=other\n")
+    assert (config.bot_service, config.hermes_profile, config.hermes_gateway_profile) == ("launchd", "seb", "default")
+    env.write_text("BOT_SERVICE=Hermes\nHERMES_PROFILE=other\nHERMES_GATEWAY_PROFILE=host\n")
     config = load_config(env)
     assert config.bot_service == "hermes" and config.hermes_profile == "other"
+    assert config.hermes_gateway_profile == "host"
     env.write_text("BOT_SERVICE=systemd\n")
     with pytest.raises(ValueError, match="BOT_SERVICE"):
         load_config(env)

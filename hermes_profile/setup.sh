@@ -3,14 +3,17 @@
 #
 #   hermes_profile/setup.sh install     create/refresh the `seb` profile, plugin, .env and settings
 #   hermes_profile/setup.sh cron        schedule the feedback runner hourly in Hermes cron (replaces launchd)
-#   hermes_profile/setup.sh start       stop the launchd bot, install + start the `seb` gateway service
-#   hermes_profile/setup.sh restart     restart the `seb` gateway (picks up merged code)
+#   hermes_profile/setup.sh start       stop the launchd bot, restart the host gateway so it serves `seb`
+#   hermes_profile/setup.sh restart     restart the host gateway (picks up merged code)
 #   hermes_profile/setup.sh sync        refresh the plugin and install its Python dependencies (runner, on merge)
-#   hermes_profile/setup.sh uninstall   stop the gateway service and remove the cron job (rollback)
+#   hermes_profile/setup.sh uninstall   stop serving the bot from Hermes and remove the cron job (rollback)
 set -euo pipefail
 
 MAIN="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${HERMES_PROFILE:-seb}"
+# Hermes runs ONE host gateway per machine (started from the default profile) that serves every
+# profile, `seb` included; it is managed from its own profile, never with `-p seb gateway …`.
+HOST_PROFILE="${HERMES_GATEWAY_PROFILE:-default}"
 HOME_DIR="$HOME/.hermes/profiles/$PROFILE"
 RUNNER_HOME="$HOME/.seb-runner"
 # The runner's Python: $BOT_PYTHON, then the one the installed launchd runner uses, then BOT_PYTHON in
@@ -101,10 +104,11 @@ SCRIPT
 
   # Hermes now owns scheduling and restarts: switch the runner over and retire the launchd runner job.
   mkdir -p "$RUNNER_HOME"; touch "$RUNNER_HOME/config.env"
-  grep -v -E '^(BOT_SERVICE|HERMES_PROFILE|HERMES_PYTHON)=' "$RUNNER_HOME/config.env" > "$RUNNER_HOME/config.env.tmp" || true
+  grep -v -E '^(BOT_SERVICE|HERMES_PROFILE|HERMES_GATEWAY_PROFILE|HERMES_PYTHON)=' "$RUNNER_HOME/config.env" > "$RUNNER_HOME/config.env.tmp" || true
   {
     echo "BOT_SERVICE=hermes"
     echo "HERMES_PROFILE=$PROFILE"
+    echo "HERMES_GATEWAY_PROFILE=$HOST_PROFILE"
     # The merge step restarts the gateway with this binary; cron's PATH may not include it.
     grep -q '^HERMES_BIN=' "$RUNNER_HOME/config.env" || echo "HERMES_BIN=$(command -v hermes)"
   } >> "$RUNNER_HOME/config.env.tmp"
@@ -141,21 +145,25 @@ cmd_sync() {
 cmd_start() {
   need_hermes
   launchctl bootout "gui/$(id -u)/com.seb.bot" 2>/dev/null && echo "Unloaded launchd com.seb.bot (one poller per token)" || true
-  hermes -p "$PROFILE" gateway install
-  hermes -p "$PROFILE" gateway start
-  hermes -p "$PROFILE" gateway status || true
+  # Restarting the host gateway makes it pick up the `seb` profile (plugin, .env, cron); if no
+  # host gateway runs yet, this starts one.
+  hermes -p "$HOST_PROFILE" gateway restart
+  hermes -p "$HOST_PROFILE" gateway status || true
 }
 
 cmd_restart() {
   need_hermes
-  hermes -p "$PROFILE" gateway restart
+  hermes -p "$HOST_PROFILE" gateway restart
 }
 
 cmd_uninstall() {
   need_hermes
   hermes -p "$PROFILE" cron remove "$JOB" 2>/dev/null || true
-  hermes -p "$PROFILE" gateway stop 2>/dev/null || true
-  hermes -p "$PROFILE" gateway uninstall 2>/dev/null || true
+  # Stop serving the bot: turn the plugin off and drop the token from the profile, then restart
+  # the host gateway (it keeps serving your other profiles).
+  hermes -p "$PROFILE" plugins disable seb 2>/dev/null || true
+  [[ -f "$HOME_DIR/.env" ]] && { grep -v -E '^TELEGRAM_BOT_TOKEN=' "$HOME_DIR/.env" > "$HOME_DIR/.env.tmp" || true; mv "$HOME_DIR/.env.tmp" "$HOME_DIR/.env"; chmod 600 "$HOME_DIR/.env"; }
+  hermes -p "$HOST_PROFILE" gateway restart 2>/dev/null || true
   if [[ -f "$RUNNER_HOME/config.env" ]]; then
     grep -v -E '^BOT_SERVICE=' "$RUNNER_HOME/config.env" > "$RUNNER_HOME/config.env.tmp" || true
     mv "$RUNNER_HOME/config.env.tmp" "$RUNNER_HOME/config.env"
