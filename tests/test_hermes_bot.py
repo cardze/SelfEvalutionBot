@@ -262,9 +262,10 @@ def _copy_plugin(tmp_path, requirements):
 def test_plugin_dependencies_follow_requirements_without_ptb(tmp_path):
     yaml_text = _copy_plugin(tmp_path, (
         "python-telegram-bot==20.7\npsycopg[binary]==3.1.12  # db\n# python-telegram-bot is pinned\n\n"
-        "python_telegram_bot[job-queue]>=20\npython-dotenv==1.0.0\ntelegram-text==1\n"))
+        "python_telegram_bot[job-queue]>=20\npython-dotenv == 1.0.0\ntelegram-text==1\n"))
     deps = yaml_text.split("python_dependencies:\n", 1)[1].splitlines()
-    assert deps == ['  - "psycopg[binary]==3.1.12"', '  - "python-dotenv==1.0.0"', '  - "telegram-text==1"']
+    # Exact pins become minimums so Hermes core's own pins (e.g. python-dotenv) still resolve.
+    assert deps == ['  - "psycopg[binary]>=3.1.12"', '  - "python-dotenv>=1.0.0"', '  - "telegram-text>=1"']
     assert yaml_text.count("python_dependencies:") == 1
     assert "seb_feedback_queue" in yaml_text  # the rest of the manifest is kept
 

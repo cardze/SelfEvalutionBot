@@ -101,7 +101,9 @@ SCRIPT
 
 # Copy the plugin shim into the profile. Its python_dependencies are generated from the bot's
 # requirements.txt minus python-telegram-bot (the gateway pins its own), so Hermes's package
-# manager installs exactly what the bot needs; nothing is pip-installed into Hermes by hand.
+# manager installs what the bot needs; nothing is pip-installed into Hermes by hand. Exact pins
+# (`pkg==X`) become minimums (`pkg>=X`): Hermes core pins shared packages such as python-dotenv
+# itself, and an exact pin that differs makes Hermes refuse the plugin.
 copy_plugin() {
   local dest="$HOME_DIR/plugins/seb"
   mkdir -p "$HOME_DIR/plugins"
@@ -112,7 +114,7 @@ copy_plugin() {
     echo "python_dependencies:"
     grep -v -E '^[[:space:]]*(#|$)' "$MAIN/requirements.txt" \
       | grep -v -i -E '^python[-_]telegram[-_]bot([^a-z0-9_-]|$)' \
-      | sed -E 's/[[:space:]]*#.*$//; s/.*/  - "&"/'
+      | sed -E 's/[[:space:]]*#.*$//; s/[[:space:]]*===?[[:space:]]*/>=/; s/.*/  - "&"/'
   } >> "$dest/plugin.yaml"
 }
 

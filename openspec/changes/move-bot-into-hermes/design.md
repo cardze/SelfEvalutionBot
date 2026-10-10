@@ -75,7 +75,8 @@ plugin (B2).
 plus the `python_dependencies` of enabled plugins), so nothing is pip-installed into it by hand.
 `hermes_profile/setup.sh` generates the copied plugin's `python_dependencies` from
 `requirements.txt` with any `python-telegram-bot` line removed (Hermes pins its own PTB; the bot
-code is compatible with both). In `hermes` mode, `merge_path`:
+code is compatible with both) and exact pins turned into minimums (`pkg==X` → `pkg>=X`): Hermes core
+pins shared packages such as `python-dotenv` itself and refuses a plugin whose exact pin differs. In `hermes` mode, `merge_path`:
 1. installs `requirements.txt` into the runner Python as today,
 2. runs `hermes_profile/setup.sh sync` (re-copy the plugin with regenerated dependencies, then
    `hermes -p seb pm install`),
