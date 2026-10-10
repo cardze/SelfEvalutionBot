@@ -13,7 +13,18 @@ MAIN="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${HERMES_PROFILE:-seb}"
 HOME_DIR="$HOME/.hermes/profiles/$PROFILE"
 RUNNER_HOME="$HOME/.seb-runner"
-PY="${BOT_PYTHON:-$MAIN/.venv/bin/python}"
+# The runner's Python: $BOT_PYTHON, then the one the installed launchd runner uses, then BOT_PYTHON in
+# ~/.seb-runner/config.env, then the repo's .venv, then python3 on PATH.
+runner_python() {
+  local py="${BOT_PYTHON:-}"
+  local plist="$HOME/Library/LaunchAgents/com.seb.runner.plist"
+  [[ -z "$py" && -f "$plist" ]] && py=$(plutil -extract EnvironmentVariables.BOT_PYTHON raw "$plist" 2>/dev/null || true)
+  [[ -z "$py" && -f "$RUNNER_HOME/config.env" ]] && \
+    py=$(grep -E '^BOT_PYTHON=' "$RUNNER_HOME/config.env" | tail -1 | sed -E 's/^BOT_PYTHON=//; s/^["'"'"']//; s/["'"'"']$//')
+  [[ -z "$py" && -x "$MAIN/.venv/bin/python" ]] && py="$MAIN/.venv/bin/python"
+  [[ -z "$py" ]] && py=$(command -v python3 || true)
+  echo "${py/#\~/$HOME}"
+}
 JOB=seb-runner
 
 need_hermes() {
@@ -72,7 +83,10 @@ cmd_install() {
 
 cmd_cron() {
   need_hermes
-  [[ -x "$PY" ]] || { echo "Runner Python $PY not found; set BOT_PYTHON" >&2; exit 1; }
+  PY=$(runner_python)
+  [[ -n "$PY" && -x "$PY" ]] || { echo "Runner Python '$PY' not found; set BOT_PYTHON=/path/to/python in $RUNNER_HOME/config.env" >&2; exit 1; }
+  "$PY" -c 'import psycopg, dotenv' 2>/dev/null || { echo "$PY lacks the bot's requirements; run: $PY -m pip install -r $MAIN/requirements.txt" >&2; exit 1; }
+  echo "Runner Python: $PY"
   mkdir -p "$HOME_DIR/scripts"
   cat > "$HOME_DIR/scripts/$JOB.sh" <<SCRIPT
 #!/bin/bash
