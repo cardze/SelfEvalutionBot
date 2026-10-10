@@ -114,7 +114,7 @@ def test_plugin_registers_factory_commands_and_tools(monkeypatch):
 
 def test_plugin_refuses_missing_checkout(monkeypatch, tmp_path):
     monkeypatch.setenv("SEB_MAIN", str(tmp_path))
-    with pytest.raises(RuntimeError, match="SEB_MAIN"):
+    with pytest.raises(RuntimeError, match="checkout not found"):
         _load_shim().register(FakeCtx())
 
 
@@ -268,17 +268,17 @@ def test_plugin_dependencies_follow_requirements_without_ptb(tmp_path):
     assert deps == ['  - "psycopg[binary]>=3.1.12"', '  - "python-dotenv>=1.0.0"', '  - "telegram-text>=1"']
     assert yaml_text.count("python_dependencies:") == 1
     assert "seb_feedback_queue" in yaml_text  # the rest of the manifest is kept
+    assert (tmp_path / "profile/plugins/seb/main_path").read_text().strip() == str(tmp_path / "main")
 
 
 def test_load_config_bot_service(tmp_path):
     env = tmp_path / "config.env"
     env.write_text("")
     config = load_config(env)
-    assert (config.bot_service, config.hermes_profile, config.hermes_gateway_profile) == ("launchd", "seb", "default")
-    env.write_text("BOT_SERVICE=Hermes\nHERMES_PROFILE=other\nHERMES_GATEWAY_PROFILE=host\n")
+    assert (config.bot_service, config.hermes_profile) == ("launchd", "seb")
+    env.write_text("BOT_SERVICE=Hermes\nHERMES_PROFILE=other\n")
     config = load_config(env)
     assert config.bot_service == "hermes" and config.hermes_profile == "other"
-    assert config.hermes_gateway_profile == "host"
     env.write_text("BOT_SERVICE=systemd\n")
     with pytest.raises(ValueError, match="BOT_SERVICE"):
         load_config(env)

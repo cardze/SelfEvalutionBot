@@ -292,9 +292,9 @@ def install_requirements(config: Config) -> None:
 
 
 def restart_hermes_gateway(config: Config) -> subprocess.CompletedProcess:
-    """Restart the host gateway (it serves every profile, `seb` included) from its own profile, in
-    its own session so it outlives this tick."""
-    cmd = ["sh", "-c", 'sleep 5; exec "$0" "$@"', config.hermes_bin, "-p", config.hermes_gateway_profile,
+    """Restart the `seb` profile's standalone gateway (hermes_profile/setup.sh sets
+    gateway.standalone) in its own session, so it outlives this tick."""
+    cmd = ["sh", "-c", 'sleep 5; exec "$0" "$@"', config.hermes_bin, "-p", config.hermes_profile,
            "gateway", "restart"]
     try:
         subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,

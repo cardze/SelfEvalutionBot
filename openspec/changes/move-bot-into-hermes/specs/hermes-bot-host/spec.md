@@ -45,14 +45,14 @@ sender cannot be determined.
 runner tick hourly without an LLM call and delivers nothing, replacing the launchd runner job.
 
 #### Scenario: Hourly tick
-- **WHEN** an hour passes with the host gateway serving the `seb` profile
+- **WHEN** an hour passes with the `seb` gateway running
 - **THEN** one runner tick runs with the same lock and log as under launchd
 
 ### Requirement: Restart the gateway after a merge
 With `BOT_SERVICE=hermes`, after the runner records a merge it SHALL have Hermes's package
 manager install the merged requirements (as the plugin's dependencies, without `python-telegram-bot`)
 instead of pip-installing into Hermes's interpreter, and SHALL restart the
-host gateway (which serves the `seb` profile) from a detached process only after the run is marked merged and the admin is notified.
+`seb` gateway from a detached process only after the run is marked merged and the admin is notified.
 
 #### Scenario: Merge from inside the gateway's cron
 - **WHEN** a ✅ Merge is processed by a tick that runs inside the gateway's cron

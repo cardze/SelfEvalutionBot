@@ -289,13 +289,14 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash   # if Hermes
 hermes_profile/setup.sh install   # profile `seb`: plugin, SOUL.md, secrets from .env, owner-only chat
 hermes -p seb model               # pick the model for the owner's chats
 hermes_profile/setup.sh cron      # hourly runner job in Hermes cron; unloads launchd com.seb.runner
-hermes_profile/setup.sh start     # unloads launchd com.seb.bot, restarts the host gateway so it serves `seb`
+hermes_profile/setup.sh start     # unloads launchd com.seb.bot, starts the `seb` gateway
 ```
 
-`setup.sh cron` writes `BOT_SERVICE=hermes`, `HERMES_PROFILE`, `HERMES_GATEWAY_PROFILE` and `HERMES_BIN` into
-`~/.seb-runner/config.env`. Hermes runs one gateway per machine (started from the `default` profile)
-that serves every profile, so `start` and `restart` restart that host gateway; your other profiles
-reconnect with it. Restart it by hand with `hermes_profile/setup.sh restart`.
+`setup.sh cron` writes `BOT_SERVICE=hermes`, `HERMES_PROFILE` and `HERMES_BIN` into
+`~/.seb-runner/config.env`. The `seb` profile runs its own gateway (`gateway.standalone: true`)
+because Hermes's shared host gateway keeps each profile's `.env` out of the process environment,
+where the bot reads its settings; `start` restarts the host gateway once so it lets go of `seb`.
+Restart the bot by hand with `hermes_profile/setup.sh restart`.
 
 - **Management page:** `hermes dashboard` opens http://127.0.0.1:9119. Pick the `seb` profile in the
   sidebar to see the gateway, the `seb-runner` cron job, the plugin, sessions and logs.

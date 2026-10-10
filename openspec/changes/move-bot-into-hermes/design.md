@@ -18,10 +18,12 @@ Facts about Hermes Agent (checked against `NousResearch/hermes-agent` main, 2026
 - Script-only cron: scripts must live in `$HERMES_HOME/scripts/`;
   `hermes cron create "every 1h" --no-agent --script X --deliver local --name N`. Empty stdout is
   a silent tick.
-- One **host gateway** per machine (started from the `default` profile) serves every profile; a
-  named profile gets no gateway of its own (`hermes -p seb gateway install|start|restart` is
-  refused). The host is managed with `hermes -p default gateway restart`, which also makes it pick
-  up a new or changed profile.
+- One **host gateway** per machine (started from the `default` profile) serves every profile. In
+  that multiplexed mode a profile's `.env` is a context-local secret scope and never reaches
+  `os.environ`, while the bot reads its settings (token, database, `ADMIN_USER_ID`) from the
+  environment. A profile with `gateway.standalone: true` opts out and runs its own gateway with its
+  `.env` loaded as usual; `hermes -p seb gateway install|start|restart` then works. setup.sh sets
+  it, restarts the host gateway so it releases `seb`, then installs and starts the `seb` gateway.
 
 ## Decisions
 
@@ -84,13 +86,13 @@ pins shared packages such as `python-dotenv` itself and refuses a plugin whose e
 2. runs `hermes_profile/setup.sh sync` (re-copy the plugin with regenerated dependencies, then
    `hermes -p seb pm install`),
 3. records the run as merged and notifies, and only then
-4. starts `hermes -p <HERMES_GATEWAY_PROFILE, default> gateway restart` (the host gateway) in a
-   detached session after a short delay — the tick
+4. starts `hermes -p seb gateway restart` (the standalone `seb` gateway) in a detached session after a short delay — the tick
    itself runs inside that gateway's cron, so restarting earlier would kill the tick mid-merge.
 
 ### B6. Rollback
-`hermes_profile/setup.sh uninstall` removes the cron job, disables the plugin, drops the bot token
-from the `seb` profile and restarts the host gateway (which keeps serving the admin's other profiles);
+`hermes_profile/setup.sh uninstall` stops and uninstalls the `seb` gateway, removes the cron job,
+disables the plugin and drops the bot token from the `seb` profile (so the host gateway never
+picks it up);
 `runner/setup.sh install-agents` brings back launchd `com.seb.bot` / `com.seb.runner`;
 `BOT_SERVICE=launchd`.
 

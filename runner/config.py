@@ -65,7 +65,6 @@ class Config:
     hermes_selftest_model: str = ""
     bot_service: str = "launchd"
     hermes_profile: str = "seb"
-    hermes_gateway_profile: str = "default"  # owner of the one host gateway that serves every profile
 
     @property
     def logs_dir(self) -> Path:
@@ -137,8 +136,6 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
         hermes_selftest_model=values.get("HERMES_SELFTEST_MODEL", ""),
         bot_service=service,
         hermes_profile=values.get("HERMES_PROFILE", base.hermes_profile).strip() or base.hermes_profile,
-        hermes_gateway_profile=(values.get("HERMES_GATEWAY_PROFILE", base.hermes_gateway_profile).strip()
-                                or base.hermes_gateway_profile),
     )
 
 

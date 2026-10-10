@@ -14,13 +14,16 @@ def find_main() -> Path:
     configured = os.environ.get("SEB_MAIN", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
+    recorded = Path(__file__).resolve().parent / "main_path"  # written by hermes_profile/setup.sh
+    if recorded.is_file() and recorded.read_text().strip():
+        return Path(recorded.read_text().strip()).expanduser().resolve()
     return Path(__file__).resolve().parent.parent.parent  # <MAIN>/hermes_plugin/seb/__init__.py
 
 
 def register(ctx):
     main = find_main()
     if not (main / "hermes_bot.py").is_file():
-        raise RuntimeError(f"SelfEvaluationBot checkout not found at {main}; set SEB_MAIN in the profile .env")
+        raise RuntimeError(f"SelfEvaluationBot checkout not found at {main}; rerun hermes_profile/setup.sh install")
     if str(main) not in sys.path:
         sys.path.append(str(main))
     try:
