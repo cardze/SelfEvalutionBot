@@ -223,11 +223,11 @@ def test_merge_path(env):
 def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
     """move-bot-into-hermes B5: no launchctl; the gateway restart is detached and comes last."""
     env.config = dataclasses.replace(env.config, bot_service="hermes", hermes_profile="seb",
-                                     hermes_python=Path("/opt/hermes/bin/python"), hermes_bin="/bin/hermes")
-    (env.config.main / "requirements.txt").write_text("python-telegram-bot==20.7\npsycopg==3.1.12\n")
-    _git(env.config.main, "commit", "-q", "-am", "reqs")
+                                     hermes_bin="/opt/hermes/bin/hermes")
     spawned = []
+    synced = []
     real_popen = subprocess.Popen
+    faked_run = rr.subprocess.run
 
     def fake_popen(cmd, *args, **kwargs):
         if "gateway" not in cmd:
@@ -235,7 +235,14 @@ def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
         run = FeedbackService.get_auto_run(run_id)
         spawned.append((cmd, kwargs, run["stage"], kinds(env)[:]))
 
+    def fake_run(cmd, *args, **kwargs):
+        if str(cmd[0]).endswith("hermes_profile/setup.sh"):
+            synced.append((cmd, kwargs["env"]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return faked_run(cmd, *args, **kwargs)
+
     monkeypatch.setattr(rr.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(rr.subprocess, "run", fake_run)
     sub = new_submission()
     assert rr.tick(env.config) == "awaiting_decision", env.notes
     run_id = run_row(sub)["id"]
@@ -244,11 +251,12 @@ def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
 
     assert ("exec", "launchctl") not in env.notes
     pips = [c for c in env.commands if c[1:3] == ["-m", "pip"]]
-    assert [c[0] for c in pips] == ["/usr/bin/python3", "/opt/hermes/bin/python"]
-    filtered = Path(pips[1][-1]).read_text()
-    assert "python-telegram-bot" not in filtered and "psycopg==3.1.12" in filtered
+    assert [c[0] for c in pips] == ["/usr/bin/python3"]  # Hermes's own environment is never pip-installed
+    [(cmd, sync_env)] = synced
+    assert cmd == [str(env.config.main / "hermes_profile/setup.sh"), "sync"]
+    assert sync_env["HERMES_PROFILE"] == "seb" and sync_env["PATH"].startswith("/opt/hermes/bin:")
     [(cmd, kwargs, stage, notes_then)] = spawned
-    assert cmd[-5:] == ["/bin/hermes", "-p", "seb", "gateway", "restart"]
+    assert cmd[-5:] == ["/opt/hermes/bin/hermes", "-p", "seb", "gateway", "restart"]
     assert kwargs["start_new_session"] is True
     assert stage == "merged" and "merged" in notes_then
     assert "warning" not in kinds(env)

@@ -18,8 +18,8 @@
 
 ## 4. Runner in Hermes mode
 
-- [x] 4.1 `BOT_SERVICE`, `HERMES_PYTHON`, `HERMES_PROFILE` in `runner/config.py`
-- [x] 4.2 `merge_path`: requirements into Hermes's Python without PTB; detached gateway restart after merged + notified
+- [x] 4.1 `BOT_SERVICE`, `HERMES_PROFILE` in `runner/config.py`
+- [x] 4.2 `merge_path`: `setup.sh sync` (plugin deps from requirements without PTB, `pm install`); detached gateway restart after merged + notified
 
 ## 5. Docs
 
@@ -31,5 +31,5 @@
 - [x] 6.2 Plugin `register(ctx)` with a fake ctx: registers the factory, commands and tools
 - [x] 6.3 Telegram factory calls init + register + background; a raising init is logged, not raised
 - [x] 6.4 Owner tools: admin allowed, other user refused, missing identity refused, CLI surface allowed
-- [x] 6.5 Requirements filter drops `python-telegram-bot` only
+- [x] 6.5 Generated plugin dependencies drop `python-telegram-bot` only
 - [x] 6.6 Hermes-mode merge restarts the gateway detached, after `merged`; launchd mode unchanged

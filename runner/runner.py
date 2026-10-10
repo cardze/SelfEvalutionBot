@@ -276,30 +276,19 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
     return "merged"
 
 
-def bot_requirements(text: str) -> str:
-    """requirements.txt without python-telegram-bot: the Hermes gateway pins its own copy (B5)."""
-    def name(line: str) -> str:
-        return line.split("#", 1)[0].strip().split(";", 1)[0].split("[", 1)[0]
-    keep = []
-    for line in text.splitlines():
-        base = name(line)
-        for sep in ("==", ">=", "<=", "~=", "!=", ">", "<", "="):
-            base = base.split(sep, 1)[0]
-        if base.strip().lower().replace("_", "-") != "python-telegram-bot":
-            keep.append(line)
-    return "\n".join(keep) + "\n"
-
-
 def install_requirements(config: Config) -> None:
-    """The runner's own Python always; in Hermes mode also the gateway's Python, without PTB."""
+    """The runner's own Python always; in Hermes mode also the gateway's environment (design B5)."""
     subprocess.run([str(config.bot_python), "-m", "pip", "install", "--quiet", "-r",
                     str(config.main / "requirements.txt")], check=True, capture_output=True)
     if config.bot_service != "hermes":
         return
-    filtered = config.runner_home / "hermes-requirements.txt"
-    filtered.write_text(bot_requirements((config.main / "requirements.txt").read_text()))
-    subprocess.run([str(config.hermes_python), "-m", "pip", "install", "--quiet", "-r", str(filtered)],
-                   check=True, capture_output=True)
+    # Hermes owns its environment: refresh the plugin (its python_dependencies are generated from
+    # requirements.txt minus python-telegram-bot) and let Hermes's package manager sync it.
+    env = {**os.environ, "HERMES_PROFILE": config.hermes_profile}
+    if os.path.isabs(config.hermes_bin):  # cron's PATH may not include Hermes's launcher
+        env["PATH"] = f"{Path(config.hermes_bin).parent}:{env.get('PATH', '')}"
+    subprocess.run([str(config.main / "hermes_profile/setup.sh"), "sync"], env=env, check=True,
+                   capture_output=True)
 
 
 def restart_hermes_gateway(config: Config) -> subprocess.CompletedProcess:

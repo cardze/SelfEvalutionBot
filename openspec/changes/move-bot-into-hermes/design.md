@@ -70,11 +70,15 @@ job is unloaded. The runner keeps sending its own Telegram messages; its buttons
 plugin (B2).
 
 ### B5. Merge in Hermes mode
-`BOT_SERVICE` in `~/.seb-runner/config.env` (`launchd` default, `hermes`), plus `HERMES_PYTHON`
-and `HERMES_PROFILE` (default `seb`). In `hermes` mode, `merge_path`:
+`BOT_SERVICE` in `~/.seb-runner/config.env` (`launchd` default, `hermes`) and `HERMES_PROFILE`
+(default `seb`). Hermes owns its Python environment (its package manager builds it from a lockfile
+plus the `python_dependencies` of enabled plugins), so nothing is pip-installed into it by hand.
+`hermes_profile/setup.sh` generates the copied plugin's `python_dependencies` from
+`requirements.txt` with any `python-telegram-bot` line removed (Hermes pins its own PTB; the bot
+code is compatible with both). In `hermes` mode, `merge_path`:
 1. installs `requirements.txt` into the runner Python as today,
-2. installs it into `HERMES_PYTHON` with any `python-telegram-bot` line removed (Hermes pins its
-   own PTB; the bot code is compatible with both),
+2. runs `hermes_profile/setup.sh sync` (re-copy the plugin with regenerated dependencies, then
+   `hermes -p seb pm install`),
 3. records the run as merged and notifies, and only then
 4. starts `hermes -p seb gateway restart` in a detached session after a short delay — the tick
    itself runs inside that gateway's cron, so restarting earlier would kill the tick mid-merge.

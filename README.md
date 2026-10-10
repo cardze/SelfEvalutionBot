@@ -270,7 +270,8 @@ handlers, wired into the gateway by the `seb` plugin ahead of Hermes's handlers.
   pointing to the commands; they cannot talk to the agent or use its tools.
 - **The feedback loop runs on Hermes cron.** A script-only job (`seb-runner`, hourly, no model call)
   starts `runner/run.sh` instead of launchd `com.seb.runner`. After you tap ✅ Merge, the runner
-  installs new requirements into Hermes's Python (never touching its `python-telegram-bot`) and
+  has Hermes install new requirements as the plugin's dependencies (never touching its
+  `python-telegram-bot`) and
   restarts the gateway once the merge is recorded.
 
 ```
@@ -291,7 +292,7 @@ hermes_profile/setup.sh cron      # hourly runner job in Hermes cron; unloads la
 hermes_profile/setup.sh start     # unloads launchd com.seb.bot, installs and starts the gateway service
 ```
 
-`setup.sh cron` writes `BOT_SERVICE=hermes`, `HERMES_PROFILE`, `HERMES_PYTHON` and `HERMES_BIN` into
+`setup.sh cron` writes `BOT_SERVICE=hermes`, `HERMES_PROFILE` and `HERMES_BIN` into
 `~/.seb-runner/config.env`. Restart the gateway by hand with `hermes_profile/setup.sh restart`.
 
 - **Management page:** `hermes dashboard` opens http://127.0.0.1:9119. Pick the `seb` profile in the

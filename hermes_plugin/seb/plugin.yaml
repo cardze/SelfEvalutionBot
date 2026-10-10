@@ -9,6 +9,8 @@ provides_tools:
 requires_env:
   - name: SEB_MAIN
     description: "Absolute path of the SelfEvaluationBot main checkout"
+# Keep python_dependencies last: hermes_profile/setup.sh regenerates it from requirements.txt
+# (minus python-telegram-bot) when it copies the plugin into the profile.
 python_dependencies:
   - "psycopg>=3.1.12,<4"
   - "python-dotenv>=1.0.0,<2"

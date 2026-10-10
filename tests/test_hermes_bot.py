@@ -121,7 +121,8 @@ def test_plugin_refuses_missing_checkout(monkeypatch, tmp_path):
 def test_plugin_yaml_declares_tools():
     text = (REPO / "hermes_plugin/seb/plugin.yaml").read_text()
     assert "seb_feedback_queue" in text and "seb_runner_status" in text
-    assert "python-telegram-bot" not in text  # Hermes pins its own PTB
+    deps = text.split("python_dependencies:\n", 1)[1]
+    assert "python-telegram-bot" not in deps  # Hermes pins its own PTB
 
 
 def test_menu_commands():
@@ -242,26 +243,40 @@ def test_feedback_queue_tool_for_owner(monkeypatch):
 # ---------- 6.5 requirements filter and runner config ----------
 
 
-def test_bot_requirements_drops_only_ptb():
-    text = ("python-telegram-bot==20.7\npsycopg[binary]==3.1.12\n# python-telegram-bot is pinned\n"
-            "python_telegram_bot[job-queue]>=20\npython-dotenv==1.0.0\ntelegram-text==1\n")
-    out = rr.bot_requirements(text).splitlines()
-    assert out == ["psycopg[binary]==3.1.12", "# python-telegram-bot is pinned", "python-dotenv==1.0.0",
-                   "telegram-text==1"]
+def _copy_plugin(tmp_path, requirements):
+    """Run setup.sh's copy_plugin function against a scratch checkout and profile."""
+    import shutil
+    import subprocess
+
+    main = tmp_path / "main"
+    shutil.copytree(REPO / "hermes_plugin", main / "hermes_plugin")
+    (main / "requirements.txt").write_text(requirements)
+    script = (REPO / "hermes_profile/setup.sh").read_text()
+    func = script[script.index("copy_plugin() {"):]
+    func = func[:func.index("\n}\n") + 3]
+    subprocess.run(["bash", "-c", func + "copy_plugin"], check=True,
+                   env={"PATH": "/usr/bin:/bin", "MAIN": str(main), "HOME_DIR": str(tmp_path / "profile")})
+    return (tmp_path / "profile/plugins/seb/plugin.yaml").read_text()
+
+
+def test_plugin_dependencies_follow_requirements_without_ptb(tmp_path):
+    yaml_text = _copy_plugin(tmp_path, (
+        "python-telegram-bot==20.7\npsycopg[binary]==3.1.12  # db\n# python-telegram-bot is pinned\n\n"
+        "python_telegram_bot[job-queue]>=20\npython-dotenv==1.0.0\ntelegram-text==1\n"))
+    deps = yaml_text.split("python_dependencies:\n", 1)[1].splitlines()
+    assert deps == ['  - "psycopg[binary]==3.1.12"', '  - "python-dotenv==1.0.0"', '  - "telegram-text==1"']
+    assert yaml_text.count("python_dependencies:") == 1
+    assert "seb_feedback_queue" in yaml_text  # the rest of the manifest is kept
 
 
 def test_load_config_bot_service(tmp_path):
     env = tmp_path / "config.env"
     env.write_text("")
     config = load_config(env)
-    assert (config.bot_service, config.hermes_python, config.hermes_profile) == ("launchd", None, "seb")
-    env.write_text("BOT_SERVICE=Hermes\nHERMES_PYTHON=~/h/bin/python\nHERMES_PROFILE=other\n")
+    assert (config.bot_service, config.hermes_profile) == ("launchd", "seb")
+    env.write_text("BOT_SERVICE=Hermes\nHERMES_PROFILE=other\n")
     config = load_config(env)
     assert config.bot_service == "hermes" and config.hermes_profile == "other"
-    assert config.hermes_python == Path("~/h/bin/python").expanduser()
-    env.write_text("BOT_SERVICE=hermes\n")
-    with pytest.raises(ValueError, match="HERMES_PYTHON"):
-        load_config(env)
     env.write_text("BOT_SERVICE=systemd\n")
     with pytest.raises(ValueError, match="BOT_SERVICE"):
         load_config(env)

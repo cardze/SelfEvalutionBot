@@ -5,6 +5,7 @@
 #   hermes_profile/setup.sh cron        schedule the feedback runner hourly in Hermes cron (replaces launchd)
 #   hermes_profile/setup.sh start       stop the launchd bot, install + start the `seb` gateway service
 #   hermes_profile/setup.sh restart     restart the `seb` gateway (picks up merged code)
+#   hermes_profile/setup.sh sync        refresh the plugin and install its Python dependencies (runner, on merge)
 #   hermes_profile/setup.sh uninstall   stop the gateway service and remove the cron job (rollback)
 set -euo pipefail
 
@@ -44,8 +45,7 @@ cmd_install() {
   mkdir -p "$HOME_DIR/plugins"
   chmod 700 "$HOME_DIR"
   cp "$MAIN/hermes_profile/SOUL.md" "$HOME_DIR/SOUL.md"
-  rm -rf "$HOME_DIR/plugins/seb"
-  cp -R "$MAIN/hermes_plugin/seb" "$HOME_DIR/plugins/seb"
+  copy_plugin
 
   set_profile_env TELEGRAM_BOT_TOKEN "$token"
   set_profile_env TELEGRAM_ALLOWED_USERS "$admin"   # only the owner chats with the agent
@@ -60,11 +60,10 @@ cmd_install() {
   hermes -p "$PROFILE" config set unauthorized_dm_behavior decline >/dev/null
   hermes -p "$PROFILE" config set unauthorized_dm_decline_message \
     "Hi! Chat is only open to the bot's owner. You can use /feedback, /remind, /reminders, /meal and /calc." >/dev/null
+  # Enabling adds the plugin to Hermes's dependency set; `pm install` syncs it (also on a re-run,
+  # when the plugin was already enabled).
   hermes -p "$PROFILE" plugins enable seb
-  # The bot's own requirements, minus python-telegram-bot (the gateway pins its own; the runner
-  # applies the same filter on every merge).
-  grep -v -i -E '^python[-_]telegram[-_]bot' "$MAIN/requirements.txt" > "$HOME_DIR/seb-requirements.txt"
-  "$(hermes_python)" -m pip install --quiet -r "$HOME_DIR/seb-requirements.txt"
+  hermes -p "$PROFILE" pm install
 
   echo "Profile $PROFILE ready at $HOME_DIR (secrets copied into its .env, not printed)."
   echo "Next: pick a model for the owner's chats:  hermes -p $PROFILE model"
@@ -92,7 +91,6 @@ SCRIPT
   {
     echo "BOT_SERVICE=hermes"
     echo "HERMES_PROFILE=$PROFILE"
-    echo "HERMES_PYTHON=$(hermes_python)"
     # The merge step restarts the gateway with this binary; cron's PATH may not include it.
     grep -q '^HERMES_BIN=' "$RUNNER_HOME/config.env" || echo "HERMES_BIN=$(command -v hermes)"
   } >> "$RUNNER_HOME/config.env.tmp"
@@ -101,10 +99,27 @@ SCRIPT
   echo "Runner scheduled in Hermes cron ($JOB, every 1h)."
 }
 
-hermes_python() {
-  local launcher; launcher=$(command -v hermes)
-  local head; head=$(head -1 "$(readlink -f "$launcher" 2>/dev/null || echo "$launcher")")
-  if [[ "$head" == "#!"*python* ]]; then echo "${head#\#!}"; else echo "$(dirname "$(readlink -f "$launcher")")/python"; fi
+# Copy the plugin shim into the profile. Its python_dependencies are generated from the bot's
+# requirements.txt minus python-telegram-bot (the gateway pins its own), so Hermes's package
+# manager installs exactly what the bot needs; nothing is pip-installed into Hermes by hand.
+copy_plugin() {
+  local dest="$HOME_DIR/plugins/seb"
+  mkdir -p "$HOME_DIR/plugins"
+  rm -rf "$dest"
+  cp -R "$MAIN/hermes_plugin/seb" "$dest"
+  sed -i.bak '/^python_dependencies:/,$d' "$dest/plugin.yaml" && rm -f "$dest/plugin.yaml.bak"
+  {
+    echo "python_dependencies:"
+    grep -v -E '^[[:space:]]*(#|$)' "$MAIN/requirements.txt" \
+      | grep -v -i -E '^python[-_]telegram[-_]bot([^a-z0-9_-]|$)' \
+      | sed -E 's/[[:space:]]*#.*$//; s/.*/  - "&"/'
+  } >> "$dest/plugin.yaml"
+}
+
+cmd_sync() {
+  need_hermes
+  copy_plugin
+  hermes -p "$PROFILE" pm install
 }
 
 cmd_start() {
@@ -137,6 +152,7 @@ case "${1:-}" in
   cron)      cmd_cron ;;
   start)     cmd_start ;;
   restart)   cmd_restart ;;
+  sync)      cmd_sync ;;
   uninstall) cmd_uninstall ;;
-  *) sed -n '2,9p' "$0"; exit 2 ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
 esac
