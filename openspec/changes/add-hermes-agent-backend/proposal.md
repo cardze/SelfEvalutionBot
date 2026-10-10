@@ -66,7 +66,7 @@ keeping the approval gate and the isolation guarantees the runner was built arou
 
 ## Impact
 
-- New: `runner/hermes.py`, `runner/hermes/config.template.yaml`, `runner/hermes/Dockerfile`,
+- New: `runner/hermes.py`, `runner/stream.py`, `runner/hermes/config.template.yaml`, `runner/hermes/Dockerfile`,
   `runner/hermes/squid.conf`, `runner/prompts/hermes.md`, tests.
 - Changed: `runner/config.py`, `runner/agent.py`, `runner/selftest.py`, `runner/verify.py`,
   `runner/runner.py`, `runner/snapshot.py`, `runner/templates.py`, `runner/setup.sh`,

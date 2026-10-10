@@ -13,6 +13,8 @@ from pathlib import Path
 RUNNER_HOME = Path.home() / ".seb-runner"
 SNAPSHOT_HOME = Path.home() / ".seb-snapshot"  # must stay outside RUNNER_HOME (sandbox denies it)
 TOKEN_PREFIX = "sk-ant-oat01-"
+BACKENDS = ("claude", "hermes")
+DEFAULT_HERMES_HOME = Path.home() / ".hermes/profiles/seb-runner"
 
 
 def parse_env_file(path: Path) -> dict:
@@ -54,6 +56,12 @@ class Config:
     build: StageLimits = field(default_factory=lambda: StageLimits(3600, 8.0, 200))
     selftest: StageLimits = field(default_factory=lambda: StageLimits(300, 0.3, 15))
     selftest_model: str = "haiku"
+    agent_backend: str = "claude"
+    hermes_bin: str = "hermes"
+    hermes_home: Path = DEFAULT_HERMES_HOME
+    hermes_model: str = ""
+    hermes_provider: str = ""
+    hermes_selftest_model: str = ""
 
     @property
     def logs_dir(self) -> Path:
@@ -71,6 +79,14 @@ class Config:
     def last_run_file(self) -> Path:
         return self.runner_home / "last_run"
 
+    @property
+    def hermes_config_file(self) -> Path:
+        return self.hermes_home / "config.yaml"
+
+    @property
+    def hermes_env_file(self) -> Path:
+        return self.hermes_home / ".env"
+
 
 def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
     values = parse_env_file(env_file)
@@ -85,6 +101,10 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
             int(values.get(f"{prefix}_MAX_TURNS", default.max_turns)),
         )
 
+    backend = values.get("AGENT_BACKEND", "claude").strip().lower()
+    if backend not in BACKENDS:
+        raise ValueError(f"AGENT_BACKEND={backend!r} in {env_file}; expected one of: {', '.join(BACKENDS)}")
+
     base = Config(main=main, workspace_root=workspace_root, bot_python=bot_python)
     return Config(
         main=main,
@@ -96,6 +116,12 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
         build=limits("BUILD", base.build),
         selftest=limits("SELFTEST", base.selftest),
         selftest_model=values.get("SELFTEST_MODEL", base.selftest_model),
+        agent_backend=backend,
+        hermes_bin=values.get("HERMES_BIN", base.hermes_bin),
+        hermes_home=Path(values.get("HERMES_HOME", base.hermes_home)).expanduser(),
+        hermes_model=values.get("HERMES_MODEL", ""),
+        hermes_provider=values.get("HERMES_PROVIDER", ""),
+        hermes_selftest_model=values.get("HERMES_SELFTEST_MODEL", ""),
     )
 
 

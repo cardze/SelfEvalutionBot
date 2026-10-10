@@ -197,6 +197,43 @@ runner/setup.sh install-agents     # stop any hand-started bot.py first; the bot
 Optional overrides live in `~/.seb-runner/config.env` (e.g. `THROTTLE_HOURS`, `BUILD_BUDGET_USD`,
 `PLAN_TIMEOUT_S`). Logs: `~/.seb-runner/logs/` (`runner.log`, `bot.out.log`, `bot.err.log`).
 
+### Hermes Agent backend
+
+The runner can run every agent step on [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+(Nous Research) instead of Claude Code. Set it in `~/.seb-runner/config.env` with
+`AGENT_BACKEND=hermes`; without that line the runner keeps using Claude Code.
+
+```
+runner tick ─▶ hermes chat --query-file - --format stream-json   (HERMES_HOME=~/.hermes/profiles/seb-runner)
+                 ├─ skills: main's .claude/agents + .claude/skills, exported as seb-agent-* / seb-*
+                 ├─ tools: terminal, file, todo, delegation   (no memory, skills, web, browser)
+                 └─ every tool call ─▶ fresh Docker container, only the workspace at /workspace
+                                         └─ internal network ─▶ seb-runner-egress (Squid) ─▶ PyPI only
+```
+
+Setup (once, Docker Desktop must be running):
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash   # install Hermes
+runner/setup.sh hermes-profile       # create + render the seb-runner profile
+HERMES_HOME=~/.hermes/profiles/seb-runner hermes auth add <provider>  # or put the API key in that profile's .env
+runner/setup.sh hermes-sandbox       # sandbox image, internal network, PyPI-only egress proxy
+runner/setup.sh use-backend hermes
+runner/setup.sh selftest             # must print SELFTEST PASSED
+```
+
+Optional `config.env` keys: `HERMES_PROVIDER`, `HERMES_MODEL`, `HERMES_SELFTEST_MODEL`, `HERMES_BIN`,
+`HERMES_HOME`. The runner re-renders the profile's `config.yaml` from
+`runner/hermes/config.template.json` on every tick and refuses to run if it is not isolated, so edit the
+template, not the rendered file. Provider keys stay in the profile on the host; they never enter the
+sandbox.
+
+- **Management page:** `hermes dashboard` opens the Hermes web UI at http://127.0.0.1:9119. Pick the
+  `seb-runner` profile in the sidebar to inspect the runner profile's config, skills and logs.
+- **Cost:** Hermes has no per-run dollar cap; runs are bounded by `*_MAX_TURNS` and `*_TIMEOUT_S`.
+  Set a spend limit with your provider.
+- **Rollback:** `runner/setup.sh use-backend claude`.
+
 ### Checking the self-test catches mistakes
 
 To confirm the self-test detects a broken rule, edit `~/.seb-runner/runner-settings.json`, run

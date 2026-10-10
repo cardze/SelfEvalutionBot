@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from clarify import get_admin_user_id
-from runner import agent, notify, refs, selftest, snapshot, testdb, validate, verify
+from runner import agent, hermes, notify, refs, selftest, snapshot, testdb, validate, verify
 from runner import workspace as ws
 from runner.config import Config, load_config, load_main_secrets, read_token
 from storage import ClarificationError, FeedbackService
@@ -38,9 +38,14 @@ class Session:
 
     def _load(self):
         if not self._loaded:
-            self.token = read_token(self.config)
-            self.agents_json = snapshot.agents_json(self.config)
-            snapshot.export_skills(self.config)
+            if self.config.agent_backend == "hermes":
+                self.token, self.agents_json = None, None
+                hermes.ensure_profile(self.config)
+                snapshot.export_hermes_skills(self.config)
+            else:
+                self.token = read_token(self.config)
+                self.agents_json = snapshot.agents_json(self.config)
+                snapshot.export_skills(self.config)
             self._loaded = True
 
     def ensure_ready(self, workspace: Path) -> None:
@@ -56,9 +61,20 @@ class Session:
 # ---------- helpers ----------
 
 
+def backend_values(config: Config) -> dict:
+    """Commands the prompts use for Python, per backend (add-hermes-agent-backend, design H6)."""
+    if config.agent_backend == "hermes":
+        return {"VENV_SETUP": hermes.VENV_SETUP, "PYTHON": f"{hermes.VENV}/bin/python",
+                "PIP": f"{hermes.VENV}/bin/pip"}
+    return {"PYTHON": ".venv/bin/python", "PIP": ".venv/bin/pip"}
+
+
 def render_prompt(config: Config, name: str, **values) -> str:
-    text = (config.main / "runner/prompts" / name).read_text()
-    for key, value in values.items():
+    prompts = config.main / "runner/prompts"
+    text = (prompts / name).read_text()
+    if config.agent_backend == "hermes":
+        text += (prompts / "hermes.md").read_text()
+    for key, value in {**backend_values(config), **values}.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
 
@@ -95,7 +111,13 @@ def build_failed(config: Config, run: dict, error: str) -> str:
     return "retry"
 
 
-def auth_problem(run: dict) -> str:
+def auth_problem(config: Config, run: dict) -> str:
+    if config.agent_backend == "hermes":
+        FeedbackService.update_auto_run(run["id"], last_error="Hermes provider authentication failed")
+        notify.warning("Hermes provider authentication failed (API key or login expired). Re-authenticate "
+                       f"the runner profile: HERMES_HOME={config.hermes_home} hermes auth add <provider> "
+                       f"(or update the key in {config.hermes_env_file}), then run: runner/setup.sh selftest")
+        return "auth"
     FeedbackService.update_auto_run(run["id"], last_error="Claude authentication failed")
     notify.warning("Claude authentication failed (token expired or revoked). "
                    "Create a new one with `claude setup-token`, copy it, then run: runner/setup.sh store-token")
@@ -132,9 +154,9 @@ def do_plan(config: Config, session: Session, run: dict, submission: dict) -> st
     prompt = render_prompt(config, "plan.md", BRANCH=run["branch"])
     result = agent.run(config, path, prompt, config.plan, token=session.token,
                        agents_json=session.agents_json)
-    log.info("PLAN finished ok=%s cost=$%.2f", result.ok, result.cost_usd)
+    log.info("PLAN finished ok=%s cost=$%.2f backend=%s", result.ok, result.cost_usd, config.agent_backend)
     if result.auth_failed:
-        return auth_problem(run)
+        return auth_problem(config, run)
     ref = refs.fetch(config, path, run["feedback_submission_id"])
     try:
         out = validate.validate_plan(ws.read_output(path), config, ref)
@@ -160,9 +182,9 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     prompt = render_prompt(config, "build.md", BRANCH=run["branch"], CHANGE_NAME=run["change_name"])
     result = agent.run(config, path, prompt, config.build, token=session.token,
                        agents_json=session.agents_json)
-    log.info("BUILD finished ok=%s cost=$%.2f", result.ok, result.cost_usd)
+    log.info("BUILD finished ok=%s cost=$%.2f backend=%s", result.ok, result.cost_usd, config.agent_backend)
     if result.auth_failed:
-        return auth_problem(run)
+        return auth_problem(config, run)
     ref = refs.fetch(config, path, run["feedback_submission_id"])
     try:
         out = validate.validate_build(ws.read_output(path), config, ref)

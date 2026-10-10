@@ -1,4 +1,7 @@
-"""Start a sandboxed headless Claude Code run inside a workspace (design D5).
+"""Start a sandboxed headless agent run inside a workspace (design D5).
+
+Dispatches on `AGENT_BACKEND` (add-hermes-agent-backend, design H2): Claude Code below, Hermes Agent
+in runner/hermes.py. Both return the backend-neutral views from runner/stream.py.
 
 The agent gets a freshly built environment: no production secrets and no database credentials
 (design D10: the sandbox has no database; DB tests skip there and run after the admin approves).
@@ -8,22 +11,14 @@ The OAuth token is passed to the `claude` process, which does not expose it to t
 
 import json
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from runner import hermes
 from runner.config import Config, StageLimits
+from runner.stream import AgentResult, StreamSummary
 
 AUTH_FAILURE_MARKERS = ("Failed to authenticate", "OAuth session expired", "Invalid API key")
-
-
-@dataclass
-class AgentResult:
-    ok: bool
-    text: str
-    cost_usd: float
-    auth_failed: bool
-    raw: str
 
 
 def build_env(config: Config, workspace: Path, token: str) -> dict:
@@ -86,7 +81,9 @@ def parse_result(raw: str) -> AgentResult:
 
 
 def run(config: Config, workspace: Path, prompt: str, limits: StageLimits, *,
-        token: str, agents_json: str) -> AgentResult:
+        token: Optional[str], agents_json: Optional[str]) -> AgentResult:
+    if config.agent_backend == "hermes":
+        return hermes.run(config, workspace, prompt, limits)
     cmd = claude_command(config, prompt, limits, agents_json=agents_json, agent="openspec-leader")
     try:
         proc = subprocess.run(cmd, cwd=workspace, env=build_env(config, workspace, token),
@@ -97,3 +94,20 @@ def run(config: Config, workspace: Path, prompt: str, limits: StageLimits, *,
     if proc.returncode == 142:  # SIGALRM from the perl timeout wrapper
         return AgentResult(False, f"Agent run exceeded {limits.timeout_s}s", 0.0, False, raw)
     return parse_result(proc.stdout or raw)
+
+
+def probe(config: Config, prompt: str, tool: str, cwd: Path, *, token: Optional[str],
+          limits: StageLimits, timeout: int) -> StreamSummary:
+    """A one-tool run whose raw tool calls/results are inspected (self-test, verification)."""
+    if config.agent_backend == "hermes":
+        return hermes.probe(config, prompt, tool, cwd, limits, timeout)
+    from runner.selftest import parse_stream  # Claude stream-json parser
+    cmd = claude_command(config, prompt, limits, model=config.selftest_model,
+                         allowed_tools=[tool], stream=True)
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, env=build_env(config, cwd, token), capture_output=True,
+                              text=True, timeout=timeout)
+        raw = proc.stdout + proc.stderr
+    except subprocess.TimeoutExpired:
+        raw = ""
+    return parse_stream(raw)

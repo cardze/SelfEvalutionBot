@@ -2,6 +2,7 @@
 
     python -m runner.templates settings              # → ~/.seb-runner/runner-settings.json
     python -m runner.templates plists <dest_dir>     # → <dest_dir>/com.seb.{bot,runner}.plist
+    python -m runner.templates hermes-profile        # → $HERMES_HOME/config.yaml (Hermes backend)
 """
 
 import json
@@ -75,6 +76,10 @@ def main(argv=None) -> int:
     config = load_config()
     if argv[:1] == ["settings"]:
         print(render_settings(config))
+    elif argv[:1] == ["hermes-profile"]:
+        from runner import hermes
+        hermes.ensure_profile(config)
+        print(config.hermes_config_file)
     elif argv[:1] == ["plists"] and len(argv) == 2:
         for path in render_plists(config, Path(argv[1]).expanduser()):
             print(path)

@@ -1,16 +1,15 @@
-"""Run the workspace's test suite inside the Claude sandbox (design D11).
+"""Run the workspace's test suite inside the agent sandbox (design D11).
 
-Tests are agent-authored, so the trusted runner never executes them directly. A small Haiku run
-executes exactly one pytest command under the runner settings; the verdict comes from the raw
-tool result in the stream-json events, never from the model's own description.
+Tests are agent-authored, so the trusted runner never executes them directly. A small agent run
+(Claude Code with Haiku, or Hermes in its Docker sandbox) executes exactly one pytest command; the
+verdict comes from the raw tool result in the event stream, never from the model's own description.
 """
 
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from runner import agent
+from runner import agent, hermes
 from runner.config import Config
 from runner.selftest import parse_stream
 
@@ -18,6 +17,10 @@ PYTEST_CMD = ".venv/bin/python -m pytest -q tests"
 PROMPT = (
     "Run exactly this bash command once, from the current directory, and then reply with only the "
     f"word DONE: {PYTEST_CMD}"
+)
+HERMES_PROMPT = (
+    "Use the terminal tool to run exactly this command once, from the current directory, and then "
+    f"reply with only the word DONE: {hermes.PYTEST_CMD}"
 )
 SUMMARY = re.compile(r"=*\s*(?P<body>(?:\d+ \w+(?:, )?)+) in [\d.]+s", re.MULTILINE)
 
@@ -28,8 +31,8 @@ class Verification:
     summary: str
 
 
-def verdict(raw: str) -> Verification:
-    stream = parse_stream(raw)
+def verdict(raw: str, stream=None) -> Verification:
+    stream = stream if stream is not None else parse_stream(raw)
     pytest_calls = [i for i, (_, target) in enumerate(stream.calls) if "pytest" in target]
     if not pytest_calls:
         return Verification(False, "the verification run made no pytest call")
@@ -49,12 +52,10 @@ def verdict(raw: str) -> Verification:
     return Verification(True, body)
 
 
-def run(config: Config, workspace: Path, token: str) -> Verification:
-    cmd = agent.claude_command(config, PROMPT, config.selftest, model=config.selftest_model,
-                               allowed_tools=["Bash"], stream=True)
-    try:
-        proc = subprocess.run(cmd, cwd=workspace, env=agent.build_env(config, workspace, token),
-                              capture_output=True, text=True, timeout=config.build.timeout_s)
-    except subprocess.TimeoutExpired:
+def run(config: Config, workspace: Path, token) -> Verification:
+    prompt = HERMES_PROMPT if config.agent_backend == "hermes" else PROMPT
+    stream = agent.probe(config, prompt, "Bash", workspace, token=token, limits=config.selftest,
+                         timeout=config.build.timeout_s)
+    if not stream.raw:
         return Verification(False, "verification timed out")
-    return verdict(proc.stdout + proc.stderr)
+    return verdict(stream.raw, stream)
