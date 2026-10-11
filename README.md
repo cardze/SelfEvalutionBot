@@ -257,6 +257,51 @@ Idle hours start no Claude session. A real run costs one self-test (~$0.05), the
 runner/setup.sh uninstall-agents   # then start bot.py by hand again
 ```
 
+## Software Factory
+
+A small, visible pipeline for building a feature with Claude Code. In a Claude Code session in this
+repo, run:
+
+```
+/factory <feature>                run a new job through the loop
+/factory next                     run the first unchecked item in factory/backlog.md
+/factory feedback [<id>]          build the next actionable /feedback submission (or that one)
+/factory approve <job-id>         merge a needs-human job into main
+/factory rework <job-id> <note>   send a job back to the builder with feedback
+```
+
+```
+feature → spec-writer → builder → security · ux · ui · code reviews → approver → merge | needs-human
+                           ▲                    │ any CHANGES (max 2 reworks)
+                           └────────────────────┘
+```
+
+The session that runs `/factory` is the orchestrator (`.claude/skills/factory/SKILL.md`); each step is a
+subagent in `.claude/agents/`. Agents read and write markdown in `factory/jobs/<job-id>/`, the builder
+commits on `factory/<job-id>` in a worktree, and merges are local (you push). Factory jobs may not
+touch the Hermes integration, `runner/` or `requirements.txt`.
+
+`/factory feedback` takes items from the same queue as `python ask.py next` and resolves the
+submission when its job merges. The runner skips feedback it is already building, but not feedback a
+factory job holds, so pick one of the two for a given submission.
+
+Watch it run on your Mac. `/factory` starts the dashboard for you when it isn't running; to start it
+yourself, from your checkout:
+
+```bash
+python factory/serve.py &     # use the bot's python (the one with psycopg), not macOS's own python3
+open http://localhost:8000/dashboard.html        # add ?demo to see sample jobs
+```
+
+The dashboard also shows /feedback submissions nobody has picked up yet in Queued (the same queue as
+`python ask.py next`), and the hourly runner's runs as dashed "runner" cards: planning in Spec, building
+in Build, waiting for your ✅ Merge under Needs human, and the last 10 merged or rejected runs
+in Done; a failed run also shows under Needs human, because it blocks new runs until you reject or retry it. Click one to read its feedback, plan and last error. A line under the title says when the
+runner last ticked, what it decided (idle, throttled, …) and when it may start its next new run; it
+reads `~/.seb-runner/logs/runner.log` and uses the same database as the runner (the `.env` of the
+checkout set as `MAIN` in `~/.seb-runner/config.env`). The runner only builds the admin's feedback, so
+queued items from other users say so.
+
 ## Run the bot on Hermes
 
 The whole bot can run inside a [Hermes Agent](https://github.com/NousResearch/hermes-agent) Telegram

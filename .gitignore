@@ -220,3 +220,6 @@ __marimo__/
 # Autonomous feedback runner (runner/): per-workspace I/O and self-test canary
 .auto/
 .auto-canary
+
+# Software factory: builder worktrees (factory/worktrees/<job-id>)
+factory/worktrees/

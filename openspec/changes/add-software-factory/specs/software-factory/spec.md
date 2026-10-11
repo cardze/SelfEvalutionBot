@@ -1,0 +1,66 @@
+## ADDED Requirements
+
+### Requirement: A job moves through a fixed loop
+`/factory <feature>` SHALL create `factory/jobs/<job-id>/` and run spec-writer, builder, four reviewers
+in parallel, and approver, in that order, recording the stage in `factory/board.json`.
+
+#### Scenario: All reviewers pass
+- **WHEN** every review in a round starts with `VERDICT: PASS` and the approver writes `APPROVE`
+- **THEN** `factory/<job-id>` is merged into `main` locally and the job's stage is `merged`
+
+#### Scenario: A reviewer asks for changes
+- **WHEN** any review in round n starts with `VERDICT: CHANGES` and fewer than 2 reworks have run
+- **THEN** the orchestrator waits for all four files of round n, resumes `builder-<job-id>`, and runs round n+1
+
+#### Scenario: Reworks run out
+- **WHEN** round 3 still has a `CHANGES` verdict
+- **THEN** the approver writes `ESCALATE` and the job's stage is `needs-human`
+
+### Requirement: Jobs can come from bot feedback
+`/factory feedback [<submission-id>]` SHALL take the first actionable submission from
+`FeedbackService.get_actionable_feedback` (or the named one), run it as a job with its `feedback_id`
+on the board, and resolve the submission with `FeedbackService.resolve_submission` after the job merges.
+
+#### Scenario: Feedback job merges
+- **WHEN** a job started from submission S is merged, by APPROVE or `/factory approve`
+- **THEN** S has a `resolved` event and leaves the actionable queue
+
+#### Scenario: Feedback job escalates
+- **WHEN** a job started from submission S ends in `needs-human`
+- **THEN** S stays unresolved
+
+#### Scenario: Empty queue
+- **WHEN** no submission is actionable
+- **THEN** no job is created and the user is told the queue is empty
+
+### Requirement: People decide escalated jobs
+`/factory approve <job-id>` SHALL merge a `needs-human` job, and `/factory rework <job-id> <note>` SHALL
+send it back to the builder with the note in `rework.md` and start a new review round.
+
+#### Scenario: Approving a job that touches Hermes
+- **WHEN** a person runs `/factory approve` on a job whose diff touches `hermes_plugin/`
+- **THEN** nothing is merged and the person is told to merge it by hand
+
+### Requirement: The dashboard shows the board
+`factory/dashboard.html` SHALL render every job in `board.json` as a card in its stage, show each review
+round as a row of four reviewer chips, set needs-human jobs apart, and open a job's markdown files on click.
+
+#### Scenario: The runner is waiting on the admin
+- **WHEN** `factory/serve.py` serves the dashboard and an `auto_runs` row is `awaiting_decision`
+- **THEN** a runner card for it shows under Needs human, saying it waits for ✅ Merge in Telegram
+
+#### Scenario: New feedback arrives
+- **WHEN** a user submits /feedback and nothing has picked it up yet
+- **THEN** it shows as a card in the Queued column within one poll
+
+#### Scenario: A tick does nothing
+- **WHEN** the runner's last tick logged `tick outcome: throttled`
+- **THEN** the dashboard says so, with the time it may start its next new run
+
+#### Scenario: No database
+- **WHEN** `factory/serve.py` cannot connect to PostgreSQL
+- **THEN** factory jobs still show and the status line names the runner error
+
+#### Scenario: A verdict lands
+- **WHEN** the orchestrator sets a reviewer to `PASS` in `board.json`
+- **THEN** that chip turns green within one poll
