@@ -304,9 +304,15 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
         notify.failure(refresh(run), f"Merge failed (conflict?):\n{merged.stderr[-1500:]}")
         return "merge_aborted"
 
-    subprocess.run(["openspec", "archive", name, "-y"], cwd=config.main, check=True, capture_output=True)
-    git_main(config, "add", "-A", "openspec")
-    git_main(config, "commit", "-q", "-m", f"chore: archive {name} and sync specs")
+    archived = subprocess.run(["openspec", "archive", name, "-y"], cwd=config.main, capture_output=True, text=True)
+    if (config.main / "openspec/changes" / name).exists():
+        # openspec exits 0 when it refuses (e.g. an invalid spec). The code is merged; only the archive is left.
+        notify.warning(f"Merged {name}, but openspec did not archive it:\n"
+                       f"{(archived.stdout + archived.stderr).strip()[-1200:]}\n"
+                       f"Fix that, then run: openspec archive {name} -y")
+    else:
+        git_main(config, "add", "-A", "openspec")
+        git_main(config, "commit", "-q", "-m", f"chore: archive {name} and sync specs")
     FeedbackService.resolve_submission(run["feedback_submission_id"])
     install_requirements(config)
     restart = None

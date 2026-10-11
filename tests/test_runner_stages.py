@@ -147,6 +147,7 @@ def env(tmp_path, monkeypatch):
         monkeypatch.setattr(notify, kind, (lambda k: lambda *a, **kw: e.notes.append((k, a, kw)) or 1)(kind))
     # The signal scan reads the real runner_signals table; stage tests replace it (tested on its own).
     e.scan_error = None
+    e.archive_refuses = False
 
     def fake_scan(config, now):
         if e.scan_error:
@@ -160,6 +161,8 @@ def env(tmp_path, monkeypatch):
     def fake_subprocess(cmd, *args, **kwargs):
         e.commands.append(list(cmd))
         if cmd[0] == "openspec" and cmd[1] == "archive":
+            if e.archive_refuses:  # real openspec exits 0 when it aborts on an invalid spec
+                return subprocess.CompletedProcess(cmd, 0, "Aborted. No files were changed.", "")
             name = cmd[2]
             src = config.main / "openspec/changes" / name
             shutil.move(str(src), str(config.main / "openspec/changes/archive" / f"2026-01-01-{name}"))
@@ -236,6 +239,19 @@ def test_merge_path(env):
     assert ("exec", "launchctl") in env.notes and ("exec", "pip") in env.notes
     assert "merged" in kinds(env)
     assert sub not in [r["id"] for r in FeedbackService.get_actionable_feedback(user_id=TEST_USER_ID)["actionable"]]
+
+
+def test_merge_still_finishes_when_openspec_refuses_to_archive(env):
+    sub = new_submission()
+    rr.tick(env.config)
+    run = run_row(sub)
+    env.archive_refuses = True
+    assert FeedbackService.set_auto_run_decision(run["id"], "merge")
+    assert rr.tick(env.config) == "merged"
+    assert (env.config.main / "openspec/changes/add-x").exists()
+    assert FeedbackService.get_auto_run(run["id"])["stage"] == "merged"
+    [warning] = [n for n in env.notes if n[0] == "warning"]
+    assert "did not archive" in warning[1][0] and "Aborted" in warning[1][0]
 
 
 def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
