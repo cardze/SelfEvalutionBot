@@ -28,6 +28,13 @@ def test_every_runner_stage_has_a_column():
         assert serve.run_card(_run(stage=stage))["stage"] in {"spec", "build", "needs-human", "merged"}
 
 
+def test_a_tapped_decision_shows_as_queued_until_the_next_tick():
+    card = serve.run_card(_run(stage="awaiting_decision", decision="merge"))
+    assert "✅ Merge queued" in card["waiting"] and "next tick" in card["waiting"]
+    assert "queued" in serve.run_card(_run(stage="failed", decision="changes"))["waiting"]
+    assert serve.run_card(_run(stage="merged", decision="merge"))["waiting"] is None
+
+
 def test_awaiting_decision_is_waiting_on_telegram():
     card = serve.run_card(_run(stage="awaiting_decision", change_name="add-calc-examples"))
     assert card["stage"] == "needs-human"
