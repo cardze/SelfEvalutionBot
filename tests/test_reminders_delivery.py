@@ -129,7 +129,7 @@ def test_post_init_schedules_delivery_loop(monkeypatch):
 
     asyncio.run(bot._post_init(fake_application))
 
-    assert len(scheduled) == 1
+    assert len(scheduled) == 2  # reminder loop + command menu
 
 
 def test_application_builder_registers_post_init(monkeypatch):

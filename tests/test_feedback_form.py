@@ -121,6 +121,30 @@ def test_start_moves_to_step_bug_even_if_prompt_fails(waits, service):
     assert state == bot.STEP_BUG and service.events == ["started"]
 
 
+@pytest.mark.parametrize(
+    "text, bug", [("/feedback the calc is wrong", "the calc is wrong"), ("/feedback@SomeBot x", "x")]
+)
+def test_start_with_inline_text_goes_to_step_2(waits, service, text, bug):
+    message, context = FlakyMessage(text), _context()
+    state = asyncio.run(bot.feedback_start(_update(message), context))
+    assert state == bot.STEP_SUGGESTION and context.user_data["bug"] == bug
+    assert service.events == ["started"] and "Step 2" in message.attempts[-1]
+
+
+@pytest.mark.parametrize("text", ["/feedback", "/feedback   "])
+def test_start_without_inline_text_stays_on_step_1(waits, service, text):
+    context = _context()
+    state = asyncio.run(bot.feedback_start(_update(FlakyMessage(text)), context))
+    assert state == bot.STEP_BUG and "bug" not in context.user_data
+
+
+def test_start_with_inline_text_moves_on_when_prompt_fails(waits, service):
+    context = _context()
+    message = FlakyMessage("/feedback the calc is wrong", _timeouts(3))
+    state = asyncio.run(bot.feedback_start(_update(message), context))
+    assert state == bot.STEP_SUGGESTION and context.user_data["bug"] == "the calc is wrong"
+
+
 @pytest.mark.parametrize("errors", [_timeouts(3), [Forbidden("blocked")]])
 def test_bug_moves_to_step_2_when_prompt_fails(waits, errors):
     context = _context()

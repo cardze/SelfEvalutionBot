@@ -78,3 +78,48 @@ def test_setup_bot_commands_ignores_telegram_timeout():
     app = FakeApplication()
     asyncio.run(bot.setup_bot_commands(app))
     assert app.bot.calls == 1
+
+
+def _start_background_with(set_my_commands, monkeypatch):
+    """Run start_background on a live loop with a stubbed reminder loop; return (calls, started)."""
+    calls, started = [], []
+
+    async def fake_delivery_loop(_bot):
+        started.append(True)
+
+    async def recording_set_my_commands(commands):
+        calls.append(commands)
+        await set_my_commands()
+
+    monkeypatch.setattr(bot.reminders, "delivery_loop", fake_delivery_loop)
+    application = SimpleNamespace(bot=SimpleNamespace(set_my_commands=recording_set_my_commands))
+
+    async def run():
+        bot.start_background(application)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    return calls, started
+
+
+def test_start_background_registers_original_command_menu(monkeypatch):
+    async def ok():
+        pass
+
+    calls, started = _start_background_with(ok, monkeypatch)
+    assert len(calls) == 1
+    names = [c.command for c in calls[0]]
+    assert "start" in names and "help" in names
+    assert started == [True]
+
+
+def test_start_background_menu_timeout_does_not_stop_reminder_loop(monkeypatch, caplog):
+    from telegram.error import TimedOut
+
+    async def timeout():
+        raise TimedOut()
+
+    calls, started = _start_background_with(timeout, monkeypatch)
+    assert len(calls) == 1 and started == [True]
+    assert "command registration failed" in caplog.text

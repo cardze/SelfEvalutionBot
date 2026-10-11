@@ -352,7 +352,11 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     # Record event in database (run in thread to avoid blocking)
     await asyncio.to_thread(feedback_service.record_event, user.id, "started")
-    
+    # Text after the command (e.g. "/feedback the calc is wrong") is the Step 1 answer.
+    parts = (update.message.text or "").split(maxsplit=1)
+    if len(parts) > 1 and parts[1].strip():
+        return await feedback_bug(update, context, parts[1].strip())
+
     await _reply(
         update.message,
         "📝 *Feedback Form* \\(Step 1 of 2\\)\n\n"
@@ -363,8 +367,11 @@ async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return STEP_BUG
 
 
-async def feedback_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["bug"] = update.message.text
+async def feedback_bug(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, bug: str | None = None
+) -> int:
+    # `bug` is the inline text from "/feedback <text>"; otherwise the message is the answer.
+    context.user_data["bug"] = update.message.text if bug is None else bug
     # The step follows what is saved: move on even if the Step 2 prompt could not be delivered.
     await _reply(
         update.message,
@@ -658,8 +665,10 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 def start_background(application: Application) -> None:
     """Start the reminder delivery loop on the running event loop (see design D1).
 
-    Shared by `main()` (via post_init) and the gateway plugin (see README)."""
+    Shared by `main()` (via post_init) and the gateway plugin (see README).
+    Also registers the original command menu; failures are logged, not raised."""
     asyncio.create_task(reminders.delivery_loop(application.bot))
+    asyncio.create_task(setup_bot_commands(application))
 
 
 async def _post_init(application: Application) -> None:
@@ -739,20 +748,6 @@ def main() -> None:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set.")
 
     application = build_application(token)
-
-    try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        if not loop.is_running():
-            loop.run_until_complete(setup_bot_commands(application))
-    except Exception as exc:
-        logger.warning(
-            "Skipping custom Telegram command registration: %s",
-            exc,
-        )
 
     register_handlers(application)
     application.run_polling()
