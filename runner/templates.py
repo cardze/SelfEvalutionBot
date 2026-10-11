@@ -43,6 +43,7 @@ def render(text: str, values: dict) -> str:
 def _values(config: Config) -> dict:
     return {
         "MAIN": config.main,
+        "SNAPSHOT": config.snapshot_home,
         "HOME": Path.home(),
         "BOT_PYTHON": config.bot_python,
         "PATH": agent_path(config),
@@ -53,7 +54,7 @@ def render_settings(config: Config) -> Path:
     text = render((TEMPLATE_DIR / "settings.template.json").read_text(), _values(config))
     settings = json.loads(text)  # must be valid JSON
     for rule in settings["permissions"]["deny"]:
-        if rule.startswith("Read(") and not rule.startswith("Read(//"):
+        if rule.startswith(("Read(", "Edit(")) and not rule.startswith(("Read(//", "Edit(//")):
             raise ValueError(f"Deny rule is not an absolute // path: {rule}")
     config.runner_home.mkdir(parents=True, exist_ok=True)
     config.settings_file.write_text(json.dumps(settings, indent=2) + "\n")

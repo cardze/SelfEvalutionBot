@@ -1,6 +1,15 @@
 {
   "permissions": {
+    "defaultMode": "acceptEdits",
     "deny": [
+      "Edit(/{{MAIN}}/**)",
+      "Edit(/{{SNAPSHOT}}/**)",
+      "Edit(/{{HOME}}/.seb-runner/**)",
+      "Edit(/{{HOME}}/.ssh/**)",
+      "Edit(/{{HOME}}/.aws/**)",
+      "Edit(/{{HOME}}/.config/**)",
+      "Edit(/{{HOME}}/.hermes/**)",
+      "Edit(/{{HOME}}/.claude/**)",
       "Read(/{{MAIN}}/**)",
       "Read(/{{HOME}}/.seb-runner/**)",
       "Read(/{{HOME}}/.ssh/**)",
