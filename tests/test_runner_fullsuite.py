@@ -115,3 +115,21 @@ def test_verdict_rejects_skips():
 def test_drop_refuses_other_databases():
     with pytest.raises(ValueError):
         testdb.drop_scratch("feedback_bot")
+
+
+def test_suite_runs_on_main_merged_with_the_change(repos):
+    config, workspace = repos
+    # main moves on after the build: a fix there must count, and a conflict must block the merge.
+    (config.main / "tests/test_base.py").write_text("def test_base():\n    assert 'fixed on main'\n")
+    _git(config.main, "commit", "-qam", "fix on main")
+    (workspace / "tests/test_feat.py").write_text("def test_feat():\n    assert True\n")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-q", "-m", "feat")
+    ref = refs.fetch(config, workspace, SUB)
+    tree = refs.git_main(config, "merge-tree", "--write-tree", "main", ref).splitlines()[0]
+    assert "fixed on main" in refs.git_main(config, "show", f"{tree}:tests/test_base.py")
+
+    (workspace / "tests/test_base.py").write_text("def test_base():\n    assert 'other'\n")
+    _git(workspace, "commit", "-qam", "clash")
+    ref = refs.fetch(config, workspace, SUB)
+    assert testdb.run_full_suite(config, ref, SUB).summary == "the change conflicts with main"
