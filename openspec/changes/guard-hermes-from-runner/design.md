@@ -42,7 +42,8 @@ restart can never target the host gateway that serves other profiles.
 ## G6. Sandbox
 `runner/settings.template.json` adds `~/.hermes` to the permission deny rules and `filesystem.denyRead`
 (the Claude backend). The Hermes backend's tool container already mounts only the workspace. The
-self-test adds a check that listing `~/.hermes` is blocked.
+self-test adds a check that listing `~/.hermes` is blocked. The runner re-renders the settings file at the start of every tick, as it already does for the
+Hermes profile, so the new deny applies after a `git pull` with no manual step.
 
 ## Affected files
 `runner/guard.py` (new), `runner/refs.py` (`added_lines`), `runner/runner.py`, `runner/config.py`,
