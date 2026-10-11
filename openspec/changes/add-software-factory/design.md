@@ -10,7 +10,7 @@
 | `.claude/agents/approver.md` | opus; writes `decision.md` (APPROVE / ESCALATE) |
 | `factory/board.json` | Durable state, read by the dashboard |
 | `factory/backlog.md` | `- [ ]` queue for `/factory next` |
-| `factory/dashboard.html` | Self-contained board, polls `board.json` every 2 s, `?demo` shows sample data |
+| `factory/dashboard.html` | Self-contained board served on the user's Mac (127.0.0.1:8000), polls `board.json` every 2 s, `?demo` shows sample data |
 
 ## Decisions
 - **D1 Files, not conversation.** Every agent reads its inputs from the job folder and writes one file.

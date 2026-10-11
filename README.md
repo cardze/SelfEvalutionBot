@@ -280,11 +280,12 @@ subagent in `.claude/agents/`. Agents read and write markdown in `factory/jobs/<
 commits on `factory/<job-id>` in a worktree, and merges are local (you push). Factory jobs may not
 touch the Hermes integration, `runner/` or `requirements.txt`.
 
-Watch it run:
+Watch it run on your Mac. `/factory` starts the dashboard for you when it isn't running; to start it
+yourself, from your checkout:
 
 ```bash
-cd factory && python3 -m http.server 8000
-# open http://localhost:8000/dashboard.html   (add ?demo to see sample jobs)
+python3 -m http.server 8000 --bind 127.0.0.1 --directory factory &
+open http://localhost:8000/dashboard.html        # add ?demo to see sample jobs
 ```
 
 ## Run the bot on Hermes

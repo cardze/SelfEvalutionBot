@@ -140,7 +140,7 @@ async function poll() {
     render();
     if (openJob) refreshTabs();
   } catch (e) {
-    document.getElementById("status").textContent = "can't read board.json — serve this folder with python3 -m http.server";
+    document.getElementById("status").textContent = "can't read board.json — on your Mac, run python3 -m http.server 8000 --bind 127.0.0.1 --directory factory";
   }
 }
 

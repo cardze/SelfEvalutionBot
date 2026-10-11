@@ -121,7 +121,17 @@ Merge locally only; never push. If the merge conflicts, abort it and mark the jo
   `stage: "build"`, resume (or respawn) `builder-<job-id>` pointing at `rework.md`, then run a new
   review round and continue the loop from step 4. The rework count starts over.
 
-## Dashboard
+## Dashboard (runs on the user's Mac)
 
-`cd factory && python3 -m http.server 8000`, then open http://localhost:8000/dashboard.html.
-It polls `board.json`; you never need to touch it.
+The dashboard is served from the user's own checkout on their Mac, never from a remote machine.
+At the start of every `/factory` command, if nothing answers on port 8000, start it in the
+background from the repo root and give the user the link:
+
+```
+curl -s -o /dev/null http://127.0.0.1:8000/dashboard.html || \
+  nohup python3 -m http.server 8000 --bind 127.0.0.1 --directory factory >/dev/null 2>&1 &
+open http://localhost:8000/dashboard.html   # macOS; first time only
+```
+
+It binds to 127.0.0.1 only, so job files are not shared on the network. It polls `board.json`;
+you never need to touch it.
