@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 
 import pytest
-from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler
 
 import bot
 import hermes_bot
@@ -55,40 +54,13 @@ def fresh_state(monkeypatch):
     monkeypatch.setattr(hermes_bot, "_db_ready", False)
 
 
-# ---------- 6.1 shared handlers ----------
+# ---------- 6.1 shared handlers: tests/test_bot_handlers.py (bot changes must not need this file) ----------
 
 
-def _describe(handler):
-    if isinstance(handler, CommandHandler):
-        return ("command", tuple(sorted(handler.commands)))
-    if isinstance(handler, CallbackQueryHandler):
-        return ("callback", handler.pattern.pattern)
-    if isinstance(handler, ConversationHandler):
-        return ("conversation", tuple(sorted(handler.entry_points[0].commands)))
-    if isinstance(handler, MessageHandler):
-        return ("message", handler.callback.__name__)
-    return ("other", type(handler).__name__)
-
-
-def test_register_handlers_matches_bot_main():
+def _handler_count():
     app = FakeApplication()
     bot.register_handlers(app)
-    got = [(_describe(h), g) for h, g in app.handlers]
-    assert got == [
-        (("message", "clarification_reply"), -1),
-        (("message", "runner_note_reply"), -2),
-        (("callback", "^run:"), 0),
-        (("callback", "^sig:"), 0),
-        (("callback", "^apv:"), 0),
-        (("callback", "^clr:"), 0),
-        (("command", ("start",)), 0),
-        (("command", ("help",)), 0),
-        (("command", ("calc",)), 0),
-        (("command", ("meal",)), 0),
-        (("command", ("remind",)), 0),
-        (("command", ("reminders",)), 0),
-        (("conversation", ("feedback",)), 0),
-    ]
+    return len(app.handlers)
 
 
 # ---------- 6.2 plugin registration ----------
@@ -147,7 +119,7 @@ def test_wire_telegram_inits_registers_and_starts_once(monkeypatch):
         for _ in range(2):
             app = FakeApplication()
             hermes_bot.wire_telegram(app, adapter=None)
-            assert len(app.handlers) == 13
+            assert len(app.handlers) == _handler_count()
             assert app.error_handlers == [bot._on_error]
     asyncio.run(connect_twice())
     assert calls == ["init", "background"]
@@ -167,7 +139,7 @@ def test_wire_telegram_survives_db_failure(monkeypatch, caplog):
         hermes_bot.wire_telegram(app)
         return app
     app = asyncio.run(connect())
-    assert len(app.handlers) == 13
+    assert len(app.handlers) == _handler_count()
     assert "database initialization failed" in caplog.text
 
 

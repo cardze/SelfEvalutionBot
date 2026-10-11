@@ -77,6 +77,20 @@ verification → 🔀 merge request (✅ Merge / ❌ Reject / 💬 Request chang
 - When an agent prompt begins with `AUTONOMOUS RUNNER RUN`, follow the "Autonomous runner mode"
   section of `openspec-leader` / `planner`.
 
+### What runner-built changes may not touch
+
+The bot can run inside the `seb` Hermes gateway, so `runner/guard.py` keeps the feedback loop away from
+Hermes (change `guard-hermes-from-runner`). After PLAN, after BUILD and again before merging, the runner
+refuses a runner-built change that:
+
+- touches `hermes_profile/`, `hermes_plugin/`, `hermes_bot.py` or any path containing `hermes`
+  (outside `openspec/`);
+- with `BOT_SERVICE=hermes`, touches `runner/` or `requirements.txt`;
+- adds a line mentioning Hermes outside `openspec/` and Markdown.
+
+Such work needs a person. A merge never runs `hermes_profile/setup.sh`; after changing the plugin or
+`requirements.txt` by hand, run `hermes_profile/setup.sh sync`.
+
 ### Reviewing runner changes
 
 With every 🔀 merge request the runner points a local branch `review/<change-name>` in the main

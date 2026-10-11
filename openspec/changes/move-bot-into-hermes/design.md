@@ -83,8 +83,9 @@ plus the `python_dependencies` of enabled plugins), so nothing is pip-installed 
 code is compatible with both) and exact pins turned into minimums (`pkg==X` → `pkg>=X`): Hermes core
 pins shared packages such as `python-dotenv` itself and refuses a plugin whose exact pin differs. In `hermes` mode, `merge_path`:
 1. installs `requirements.txt` into the runner Python as today,
-2. runs `hermes_profile/setup.sh sync` (re-copy the plugin with regenerated dependencies, then
-   `hermes -p seb pm install`),
+2. (superseded by `guard-hermes-from-runner` G4: the merge no longer runs `hermes_profile/setup.sh
+   sync`; runner-built changes cannot change the plugin or `requirements.txt` in Hermes mode, and a
+   person runs `sync` after changing them),
 3. records the run as merged and notifies, and only then
 4. starts `hermes -p seb gateway restart` (the standalone `seb` gateway) in a detached session after a short delay — the tick
    itself runs inside that gateway's cron, so restarting earlier would kill the tick mid-merge.

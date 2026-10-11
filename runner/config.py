@@ -6,6 +6,7 @@ trusted runner, never passed to agents.
 """
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ RUNNER_HOME = Path.home() / ".seb-runner"
 SNAPSHOT_HOME = Path.home() / ".seb-snapshot"  # must stay outside RUNNER_HOME (sandbox denies it)
 TOKEN_PREFIX = "sk-ant-oat01-"
 BACKENDS = ("claude", "hermes")
+PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 BOT_SERVICES = ("launchd", "hermes")  # what runs the Telegram bot (move-bot-into-hermes, B5)
 DEFAULT_HERMES_HOME = Path.home() / ".hermes/profiles/seb-runner"
 
@@ -118,6 +120,11 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
         raise ValueError(f"BOT_SERVICE={service!r} in {env_file}; expected one of: {', '.join(BOT_SERVICES)}")
 
     base = Config(main=main, workspace_root=workspace_root, bot_python=bot_python)
+    profile = values.get("HERMES_PROFILE", base.hermes_profile).strip() or base.hermes_profile
+    # The merge restarts this profile's gateway; `default` is the host gateway that serves every
+    # other profile (guard-hermes-from-runner G5).
+    if not PROFILE_NAME.match(profile) or profile == "default":
+        raise ValueError(f"HERMES_PROFILE={profile!r} in {env_file}; expected a profile name other than 'default'")
     return Config(
         main=main,
         workspace_root=workspace_root,
@@ -135,7 +142,7 @@ def load_config(env_file: Path = RUNNER_HOME / "config.env") -> Config:
         hermes_provider=values.get("HERMES_PROVIDER", ""),
         hermes_selftest_model=values.get("HERMES_SELFTEST_MODEL", ""),
         bot_service=service,
-        hermes_profile=values.get("HERMES_PROFILE", base.hermes_profile).strip() or base.hermes_profile,
+        hermes_profile=profile,
     )
 
 

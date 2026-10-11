@@ -49,17 +49,18 @@ runner tick hourly without an LLM call and delivers nothing, replacing the launc
 - **THEN** one runner tick runs with the same lock and log as under launchd
 
 ### Requirement: Restart the gateway after a merge
-With `BOT_SERVICE=hermes`, after the runner records a merge it SHALL have Hermes's package
-manager install the merged requirements (as the plugin's dependencies, without `python-telegram-bot`)
-instead of pip-installing into Hermes's interpreter, and SHALL restart the
-`seb` gateway from a detached process only after the run is marked merged and the admin is notified.
+With `BOT_SERVICE=hermes`, the runner SHALL NOT pip-install into Hermes's interpreter, and SHALL
+restart the `seb` gateway from a detached process only after the run is marked merged and the admin
+is notified. `hermes_profile/setup.sh sync` SHALL install `requirements.txt` as the plugin's
+dependencies (without `python-telegram-bot`); a person runs it, never the merge
+(see `guard-hermes-from-runner`).
 
 #### Scenario: Merge from inside the gateway's cron
 - **WHEN** a ✅ Merge is processed by a tick that runs inside the gateway's cron
 - **THEN** the run is marked `merged`, the admin is told, and then the gateway restarts with the merged code
 
 #### Scenario: Requirements pin an older PTB
-- **WHEN** `requirements.txt` contains `python-telegram-bot==20.7`
+- **WHEN** `requirements.txt` contains `python-telegram-bot==20.7` and `setup.sh sync` runs
 - **THEN** the plugin's generated dependencies leave that line out
 
 ### Requirement: launchd mode stays available

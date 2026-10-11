@@ -59,6 +59,25 @@ def added_requirements(config: Config, ref: str) -> list[str]:
     return lines
 
 
+def added_lines(config: Config, ref: str) -> list[tuple[str, str]]:
+    """(path, text) for every line the branch adds outside openspec/ and Markdown (guard-hermes-from-runner)."""
+    diff = git_main(config, "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv",
+                    "--no-color", "--no-renames", "-U0", f"main...{ref}", "--", ".",
+                    ":(exclude,icase)openspec", ":(exclude,glob,icase)**/*.md")
+    lines, path, in_header = [], "", False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            in_header = True
+        elif in_header:
+            if line.startswith("+++ "):
+                path = line[4:].removeprefix("b/")
+            elif line.startswith("@@"):
+                in_header = False
+        elif line.startswith("+"):
+            lines.append((path, line[1:]))
+    return lines
+
+
 def has_change(config: Config, ref: str, change_name: str) -> bool:
     result = subprocess.run(
         ["git", *SAFE, "-C", str(config.main), "cat-file", "-e", f"{ref}:openspec/changes/{change_name}/tasks.md"],

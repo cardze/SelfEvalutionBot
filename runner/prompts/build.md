@@ -26,6 +26,7 @@ changes scope or design.
     "new_dependencies": ["<requirement lines you added, or empty>"]}
 
 ## Rules
+- {{PROTECTED}}
 - Do not push, add remotes, or modify files outside this workspace.
 - Do not archive the change or merge anything; the runner does that after the admin approves.
 - If you cannot finish (e.g. tests keep failing), still commit what you have and write output.json with
