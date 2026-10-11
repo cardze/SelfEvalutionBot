@@ -37,7 +37,10 @@
   reads `auto_runs` joined to the feedback (read-only, in-flight runs plus the last 10 finished) and
   maps each run to a card: planning/planned → Spec, building → Build, awaiting_decision → Needs human,
   merged/rejected/failed → Done. Actionable feedback (`FeedbackService.get_actionable_feedback`, the
-  `ask.py next` queue) is drawn in a Queued column before Spec. The runner itself is unchanged. Without a database the board still
+  `ask.py next` queue) is drawn in a Queued column before Spec; items not from `ADMIN_USER_ID` say the
+  runner won't take them. `serve.py` loads the runner's own config so it reads the runner's database,
+  and reports the last `tick outcome` from `~/.seb-runner/logs/runner.log` plus the throttle window from
+  `last_run`, because a tick that is idle or throttled sends nothing to Telegram. The runner itself is unchanged. Without a database the board still
   shows factory jobs and names the error.
 - **D8 Verdict lines.** Reviews start with `VERDICT: PASS|CHANGES`; `decision.md` starts with
   `APPROVE|ESCALATE`. The orchestrator and the dashboard parse only that first line.

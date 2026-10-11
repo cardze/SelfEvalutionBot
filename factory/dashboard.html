@@ -25,6 +25,9 @@
   header { display: flex; align-items: baseline; gap: 12px; padding: 20px 24px 8px; }
   h1 { font-size: 18px; margin: 0; font-weight: 600; }
   #status { color: var(--muted); font-size: 12px; }
+  #runner-status { margin: 0 24px; font-size: 12px; color: var(--muted); }
+  #runner-status:empty { display: none; }
+  #runner-status b { color: var(--ink); font-weight: 600; }
   .human { margin: 8px 24px 0; padding: 12px; border-radius: 10px; background: var(--human-bg);
            border: 1px solid var(--human); }
   .human h2 { color: var(--human); }
@@ -84,6 +87,7 @@
 </head>
 <body>
 <header><h1>Software Factory</h1><span id="status">loading…</span></header>
+<div id="runner-status"></div>
 <section class="human" id="human"></section>
 <main class="board" id="board"></main>
 <aside id="drawer">
@@ -155,6 +159,7 @@ async function poll() {
       const res = await fetch("runner.json", { cache: "no-store" }).catch(() => null);
       runner = res && res.ok ? await res.json() : { runs: [], error: "start factory/serve.py to see the runner" };
     }
+    document.getElementById("runner-status").innerHTML = runnerLine(runner.status);
     document.getElementById("status").textContent = (DEMO ? "demo data · " : "") + "updated " +
       new Date().toLocaleTimeString() + (runner.error ? " · runner: " + runner.error : "");
     render();
@@ -162,6 +167,16 @@ async function poll() {
   } catch (e) {
     document.getElementById("status").textContent = "can't read board.json — on your Mac, run python3 factory/serve.py";
   }
+}
+
+// One line on the hourly runner: when it last ticked, what it decided, when it may start a new run.
+function runnerLine(st) {
+  if (!st) return "";
+  const parts = ["<b>Runner</b>"];
+  parts.push(st.last_tick ? `last tick ${esc(st.last_tick)}` : "no tick logged yet");
+  if (st.explain) parts.push(esc(st.explain));
+  if (st.next_new_run) parts.push(`next new run after ${esc(st.next_new_run.replace("T", " "))}`);
+  return parts.join(" · ");
 }
 
 // Every file a job can have, derived from the folder layout in SKILL.md.
@@ -245,7 +260,8 @@ const DEMO_BOARD = { jobs: [
   { id: "004-help-grouping", title: "Group /help by topic", branch: "factory/004-help-grouping", stage: "build", round: 0 },
   { id: "005-meal-history", title: "Remember the last 3 /meal picks", branch: "factory/005-meal-history", stage: "spec", round: 0 },
 ] };
-const DEMO_RUNNER = { runs: [
+const DEMO_RUNNER = { status: { last_tick: "2026-10-11 04:00:02", outcome: "throttled",
+    explain: "no new run yet: the runner starts at most one new run every 5 h", next_new_run: "2026-10-11T07:41" }, runs: [
   { id: "9d03e6aa", title: "meal picker keeps suggesting the same dish", stage: "queued", feedback_id: "9d03e6aa",
     files: { "feedback.md": "# Feedback\n## What didn't meet expectations\nmeal picker keeps suggesting the same dish\n## Suggested fix\nskip the last 3 picks" } },
   { id: "add-calc-examples", title: "calc gives no hint when I type it wrong", branch: "auto/6f1c2a90",

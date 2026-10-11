@@ -296,7 +296,11 @@ open http://localhost:8000/dashboard.html        # add ?demo to see sample jobs
 The dashboard also shows /feedback submissions nobody has picked up yet in Queued (the same queue as
 `python ask.py next`), and the hourly runner's runs as dashed "runner" cards: planning in Spec, building
 in Build, waiting for your ✅ Merge under Needs human, and the last 10 merged, rejected or failed runs
-in Done. Click one to read its feedback, plan and last error.
+in Done. Click one to read its feedback, plan and last error. A line under the title says when the
+runner last ticked, what it decided (idle, throttled, …) and when it may start its next new run; it
+reads `~/.seb-runner/logs/runner.log` and uses the same database as the runner (the `.env` of the
+checkout set as `MAIN` in `~/.seb-runner/config.env`). The runner only builds the admin's feedback, so
+queued items from other users say so.
 
 ## Run the bot on Hermes
 

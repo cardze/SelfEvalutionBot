@@ -53,6 +53,10 @@ round as a row of four reviewer chips, set needs-human jobs apart, and open a jo
 - **WHEN** a user submits /feedback and nothing has picked it up yet
 - **THEN** it shows as a card in the Queued column within one poll
 
+#### Scenario: A tick does nothing
+- **WHEN** the runner's last tick logged `tick outcome: throttled`
+- **THEN** the dashboard says so, with the time it may start its next new run
+
 #### Scenario: No database
 - **WHEN** `factory/serve.py` cannot connect to PostgreSQL
 - **THEN** factory jobs still show and the status line names the runner error

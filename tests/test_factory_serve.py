@@ -57,3 +57,37 @@ def test_queued_feedback_card():
     assert card["stage"] == "queued"
     assert card["feedback_id"] == str(sub["id"])
     assert "the last 3" in card["files"]["feedback.md"]
+
+
+class _Config:
+    def __init__(self, home, throttle_hours=5.0):
+        self.logs_dir = home / "logs"
+        self.last_run_file = home / "last_run"
+        self.throttle_hours = throttle_hours
+
+
+def test_runner_status_reads_last_tick_and_throttle(tmp_path):
+    config = _Config(tmp_path)
+    config.logs_dir.mkdir()
+    (config.logs_dir / "runner.log").write_text(
+        "2026-10-11 03:00:01,100 INFO tick outcome: idle\n"
+        "2026-10-11 04:00:02,200 INFO signals: 0 events read\n"
+        "2026-10-11 04:00:02,300 INFO tick outcome: throttled\n")
+    now = 1_000_000.0
+    config.last_run_file.write_text(f"{now - 3600}\n")
+    status = serve.runner_status(config, now=now)
+    assert status["last_tick"] == "2026-10-11 04:00:02"
+    assert status["outcome"] == "throttled"
+    assert "5 h" in status["explain"]
+    assert status["next_new_run"] is not None
+
+
+def test_runner_status_without_log(tmp_path):
+    status = serve.runner_status(_Config(tmp_path), now=0)
+    assert status["last_tick"] is None and "never ticked" in status["explain"]
+
+
+def test_queued_feedback_from_non_admin_is_flagged():
+    sub = {"id": uuid4(), "user_id": 2, "bug_text": "x", "suggestion_text": "y", "created_at": None}
+    assert "admin" in serve.queue_card(sub, admin_id=1)["waiting"]
+    assert serve.queue_card({**sub, "user_id": 1}, admin_id=1)["waiting"] is None

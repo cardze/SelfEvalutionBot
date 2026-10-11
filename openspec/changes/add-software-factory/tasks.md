@@ -8,3 +8,4 @@
 - [x] 1.6 `/factory feedback`: queue via `ask.py next`, `feedback_id` on the board, resolve after merge
 - [x] 1.7 `factory/serve.py` + `/runner.json`: runner runs as cards on the dashboard, with tests
 - [x] 1.8 Queued column: actionable /feedback submissions on the dashboard
+- [x] 1.9 Runner status line (last tick, outcome, next new run) and admin-only flag on queued feedback
