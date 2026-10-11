@@ -36,7 +36,7 @@
 - **D7 Runner on the board.** `factory/serve.py` serves the dashboard and `GET /runner.json`, which
   reads `auto_runs` joined to the feedback (read-only, in-flight runs plus the last 10 finished) and
   maps each run to a card: planning/planned → Spec, building → Build, awaiting_decision → Needs human,
-  merged/rejected/failed → Done. Actionable feedback (`FeedbackService.get_actionable_feedback`, the
+  failed → Needs human (it still blocks new runs), merged/rejected → Done. Actionable feedback (`FeedbackService.get_actionable_feedback`, the
   `ask.py next` queue) is drawn in a Queued column before Spec; items not from `ADMIN_USER_ID` say the
   runner won't take them. `serve.py` loads the runner's own config so it reads the runner's database,
   and reports the last `tick outcome` from `~/.seb-runner/logs/runner.log` plus the throttle window from

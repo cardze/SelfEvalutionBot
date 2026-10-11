@@ -45,7 +45,7 @@ STAGE_COLUMNS = {
     "awaiting_decision": "needs-human",
     "merged": "merged",
     "rejected": "merged",
-    "failed": "merged",
+    "failed": "needs-human",  # still open: it blocks new runs until you reject or retry it
 }
 
 RUNS_SQL = """
@@ -54,8 +54,8 @@ RUNS_SQL = """
            s.bug_text, s.suggestion_text
     FROM auto_runs r
     JOIN feedback_submissions s ON s.id = r.feedback_submission_id
-    WHERE r.stage NOT IN ('merged', 'rejected', 'failed')
-       OR r.id IN (SELECT id FROM auto_runs WHERE stage IN ('merged', 'rejected', 'failed')
+    WHERE r.stage NOT IN ('merged', 'rejected')
+       OR r.id IN (SELECT id FROM auto_runs WHERE stage IN ('merged', 'rejected')
                    ORDER BY updated_at DESC LIMIT %s)
     ORDER BY r.updated_at DESC
 """
@@ -72,7 +72,8 @@ def run_card(run: dict) -> dict:
     if run.get("decision_note"):
         files["note.md"] = f"# Your note\n{run['decision_note']}\n"
     waiting = {"planned": "waiting for ▶️ Build in Telegram",
-               "awaiting_decision": "waiting for ✅ Merge in Telegram"}.get(run["stage"])
+               "awaiting_decision": "waiting for ✅ Merge in Telegram",
+               "failed": "failed: ❌ Reject or 💬 Request changes in Telegram; no new run starts until then"}.get(run["stage"])
     return {
         "id": run["change_name"] or str(run["id"])[:8],
         "title": run["bug_text"].splitlines()[0][:80] if run["bug_text"] else "(no text)",

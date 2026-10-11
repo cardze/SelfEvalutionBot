@@ -91,3 +91,9 @@ def test_queued_feedback_from_non_admin_is_flagged():
     sub = {"id": uuid4(), "user_id": 2, "bug_text": "x", "suggestion_text": "y", "created_at": None}
     assert "admin" in serve.queue_card(sub, admin_id=1)["waiting"]
     assert serve.queue_card({**sub, "user_id": 1}, admin_id=1)["waiting"] is None
+
+
+def test_failed_run_is_open_and_waits_on_the_admin():
+    card = serve.run_card(_run(stage="failed", last_error="boom"))
+    assert card["stage"] == "needs-human"
+    assert "Reject" in card["waiting"]
