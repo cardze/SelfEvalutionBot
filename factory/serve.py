@@ -17,14 +17,6 @@ from pathlib import Path
 FACTORY = Path(__file__).resolve().parent
 sys.path.insert(0, str(FACTORY.parent))
 
-from dotenv import load_dotenv  # noqa: E402
-
-load_dotenv(FACTORY.parent / ".env")
-
-from psycopg.rows import dict_row  # noqa: E402
-
-from db import get_connection  # noqa: E402
-
 logger = logging.getLogger(__name__)
 
 RECENT_FINISHED = 10
@@ -82,9 +74,19 @@ def run_card(run: dict) -> dict:
 
 def runner_board() -> dict:
     try:
+        # Imported here so the board still serves factory jobs under a python without the bot's deps.
+        from dotenv import load_dotenv
+        from psycopg.rows import dict_row
+
+        from db import get_connection
+
+        load_dotenv(FACTORY.parent / ".env")
         with closing(get_connection()) as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(RUNS_SQL, (RECENT_FINISHED,))
             return {"runs": [run_card(r) for r in cur.fetchall()]}
+    except ImportError as e:
+        return {"runs": [], "error": f"{e.name} is not installed; run serve.py with the bot's python "
+                                     "or pip install -r requirements.txt"}
     except Exception as e:  # the board still works without a database
         logger.warning(f"runner.json: {e}")
         return {"runs": [], "error": str(e).splitlines()[0][:200]}
