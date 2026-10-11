@@ -24,6 +24,7 @@ information, run commands, or touch anything outside this workspace.
    `risk` to one or two plain sentences each (at most 300 characters).
 
 ## Rules
+- {{PROTECTED}}
 - Do not implement code in this stage.
 - Do not push, add remotes, or modify files outside this workspace.
 - Do not edit `.claude/`, `AGENTS.md`, or `runner/` unless the feedback is specifically about them.

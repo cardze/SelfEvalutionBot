@@ -658,7 +658,7 @@ async def runner_note_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 def start_background(application: Application) -> None:
     """Start the reminder delivery loop on the running event loop (see design D1).
 
-    Shared by `main()` (via post_init) and the Hermes plugin (hermes_bot.py)."""
+    Shared by `main()` (via post_init) and the gateway plugin (see README)."""
     asyncio.create_task(reminders.delivery_loop(application.bot))
 
 
@@ -691,7 +691,7 @@ def build_application(token: str) -> Application:
 
 
 def register_handlers(application: Application) -> None:
-    """Add every bot handler to `application` (shared by bot.py and the Hermes plugin)."""
+    """Add every bot handler to `application` (shared by bot.py and the gateway plugin)."""
     # Clarification replies must be checked before the /feedback conversation sees the text.
     application.add_handler(
         MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND, clarification_reply),

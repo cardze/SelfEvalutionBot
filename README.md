@@ -270,9 +270,14 @@ handlers, wired into the gateway by the `seb` plugin ahead of Hermes's handlers.
   pointing to the commands; they cannot talk to the agent or use its tools.
 - **The feedback loop runs on Hermes cron.** A script-only job (`seb-runner`, hourly, no model call)
   starts `runner/run.sh` instead of launchd `com.seb.runner`. After you tap ✅ Merge, the runner
-  has Hermes install new requirements as the plugin's dependencies (never touching its
-  `python-telegram-bot`) and
-  restarts the gateway once the merge is recorded.
+  restarts the `seb` gateway once the merge is recorded. That restart is the only Hermes command a
+  merge runs.
+- **Feedback changes cannot touch Hermes.** The runner refuses (after PLAN, after BUILD and again
+  before merging) any runner-built change to `hermes_profile/`, `hermes_plugin/`, `hermes_bot.py`,
+  any path with `hermes` in its name, `runner/` or `requirements.txt`, and any added code that
+  mentions Hermes. The agent sandbox cannot read `~/.hermes`. Those changes need you: make them by
+  hand or in a pull request, then run `hermes_profile/setup.sh sync` (plugin and dependencies) and
+  `hermes_profile/setup.sh restart`.
 
 ```
 Telegram ─▶ Hermes gateway (profile seb)

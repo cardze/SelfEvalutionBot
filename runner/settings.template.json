@@ -6,6 +6,7 @@
       "Read(/{{HOME}}/.ssh/**)",
       "Read(/{{HOME}}/.aws/**)",
       "Read(/{{HOME}}/.config/**)",
+      "Read(/{{HOME}}/.hermes/**)",
       "Bash(git push *)",
       "Bash(git remote *)"
     ]
@@ -20,7 +21,8 @@
         "{{HOME}}/.seb-runner",
         "{{HOME}}/.ssh",
         "{{HOME}}/.aws",
-        "{{HOME}}/.config"
+        "{{HOME}}/.config",
+        "{{HOME}}/.hermes"
       ]
     },
     "network": {

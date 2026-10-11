@@ -252,14 +252,65 @@ def test_merge_path_hermes_restarts_gateway_after_merged(env, monkeypatch):
     assert ("exec", "launchctl") not in env.notes
     pips = [c for c in env.commands if c[1:3] == ["-m", "pip"]]
     assert [c[0] for c in pips] == ["/usr/bin/python3"]  # Hermes's own environment is never pip-installed
-    [(cmd, sync_env)] = synced
-    assert cmd == [str(env.config.main / "hermes_profile/setup.sh"), "sync"]
-    assert sync_env["HERMES_PROFILE"] == "seb" and sync_env["PATH"].startswith("/opt/hermes/bin:")
+    assert synced == []  # guard-hermes-from-runner G4: a merge never runs setup.sh
+    assert not [c for c in env.commands if "hermes" in Path(str(c[0])).name or "setup.sh" in str(c[0])]
     [(cmd, kwargs, stage, notes_then)] = spawned
     assert cmd[-5:] == ["/opt/hermes/bin/hermes", "-p", "seb", "gateway", "restart"]
     assert kwargs["start_new_session"] is True
     assert stage == "merged" and "merged" in notes_then
     assert "warning" not in kinds(env)
+
+
+def test_build_touching_hermes_plugin_fails_without_retry(env, monkeypatch):
+    """guard-hermes-from-runner: refused after BUILD, no retry, no merge request."""
+    real_agent = agent.run
+
+    def plugin_agent(config, path, prompt, limits, *, token, agents_json):
+        result = real_agent(config, path, prompt, limits, token=token, agents_json=agents_json)
+        if "stage: BUILD" in prompt:
+            (path / "hermes_plugin/seb").mkdir(parents=True)
+            (path / "hermes_plugin/seb/__init__.py").write_text("def register(ctx): pass\n")
+            _git(path, "add", "hermes_plugin")
+            _git(path, "commit", "-q", "-m", "touch plugin")
+        return result
+
+    monkeypatch.setattr(agent, "run", plugin_agent)
+    sub = new_submission()
+    assert rr.tick(env.config) == "failed"
+    assert env.agent_prompts == ["plan", "build"]
+    assert kinds(env) == ["planned", "failure"]
+    message = env.notes[-1][1][1]
+    assert "BUILD refused" in message and "hermes_plugin/seb/__init__.py" in message
+    assert FeedbackService.get_auto_run(run_id_of(sub))["stage"] == "failed"
+
+
+def test_merge_refuses_protected_commit(env):
+    """The ref is re-checked before merging: the workspace is agent-controlled."""
+    sub = new_submission()
+    assert rr.tick(env.config) == "awaiting_decision"
+    run = run_row(sub)
+    path = Path(run["workspace_path"])
+    (path / "hermes_bot.py").write_text("x = 1\n")
+    _git(path, "add", "hermes_bot.py")
+    _git(path, "commit", "-q", "-m", "sneak in")
+    head = subprocess.run(["git", "-C", str(env.config.main), "rev-parse", "main"],
+                          capture_output=True, text=True).stdout
+    FeedbackService.set_auto_run_decision(run["id"], "merge")
+    assert rr.tick(env.config) == "merge_aborted"
+    assert subprocess.run(["git", "-C", str(env.config.main), "rev-parse", "main"],
+                          capture_output=True, text=True).stdout == head
+    assert "Merge refused" in env.notes[-1][1][1] and "hermes_bot.py" in env.notes[-1][1][1]
+    after = FeedbackService.get_auto_run(run["id"])
+    assert after["stage"] == "awaiting_decision" and after["decision"] is None
+
+
+def run_id_of(sub):
+    conn = db.get_connection()
+    with closing(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM auto_runs WHERE feedback_submission_id = %s", (sub,))
+            row = cur.fetchone()
+            return row["id"] if isinstance(row, dict) else row[0]
 
 
 def test_merge_waits_for_dirty_main(env):

@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from clarify import get_admin_user_id
-from runner import agent, hermes, notify, refs, selftest, signals, snapshot, testdb, validate, verify
+from runner import agent, guard, hermes, notify, refs, selftest, signals, snapshot, testdb, validate, verify
 from runner import workspace as ws
 from runner.config import Config, load_config, load_main_secrets, read_token
 from storage import ClarificationError, FeedbackService
@@ -75,7 +75,7 @@ def render_prompt(config: Config, name: str, **values) -> str:
     text = (prompts / name).read_text()
     if config.agent_backend == "hermes":
         text += (prompts / "hermes.md").read_text()
-    for key, value in {**backend_values(config), **values}.items():
+    for key, value in {**backend_values(config), "PROTECTED": guard.prompt_rule(config), **values}.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
 
@@ -163,6 +163,9 @@ def do_plan(config: Config, session: Session, run: dict, submission: dict) -> st
         out = validate.validate_plan(ws.read_output(path), config, ref)
     except validate.OutputError as e:
         return fail(run, f"PLAN failed: {e}\n\nAgent said: {result.text[-800:]}")
+    blocked = guard.violations(config, ref)
+    if blocked:
+        return fail(run, f"PLAN refused: {guard.describe(blocked)}")
     plan = json.dumps({"summary": out["summary"], "impact": out["impact"]})
     FeedbackService.update_auto_run(run["id"], stage="planned", change_name=out["change_name"],
                                     plan_summary=plan, plan_message_id=None, last_error=None)
@@ -202,6 +205,9 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     if result.auth_failed:
         return auth_problem(config, run)
     ref = refs.fetch(config, path, run["feedback_submission_id"])
+    blocked = guard.violations(config, ref)
+    if blocked:  # not retried: another attempt at the same plan would need the same paths
+        return fail(run, f"BUILD refused: {guard.describe(blocked)}")
     try:
         out = validate.validate_build(ws.read_output(path), config, ref)
     except validate.OutputError as e:
@@ -234,6 +240,12 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
         return "merge_waiting"
     path = Path(run["workspace_path"])
     ref = refs.fetch(config, path, run["feedback_submission_id"])
+    # Re-checked on exactly this commit: the workspace is agent-controlled (guard-hermes-from-runner G3).
+    blocked = guard.violations(config, ref)
+    if blocked:
+        FeedbackService.update_auto_run(run["id"], decision=None, last_error=guard.describe(blocked)[:4000])
+        notify.failure(refresh(run), f"Merge refused. {guard.describe(blocked)}")
+        return "merge_aborted"
     # Approved by the admin: run the COMPLETE suite (incl. database tests) on exactly this commit.
     verification = testdb.run_full_suite(config, ref, run["feedback_submission_id"])
     if not verification.ok:
@@ -277,18 +289,11 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
 
 
 def install_requirements(config: Config) -> None:
-    """The runner's own Python always; in Hermes mode also the gateway's environment (design B5)."""
+    """Into the runner's own Python only. In Hermes mode a runner-built change cannot change
+    requirements.txt or the plugin (guard-hermes-from-runner G4), so Hermes's environment is never
+    touched here; a person who changes them runs `hermes_profile/setup.sh sync`."""
     subprocess.run([str(config.bot_python), "-m", "pip", "install", "--quiet", "-r",
                     str(config.main / "requirements.txt")], check=True, capture_output=True)
-    if config.bot_service != "hermes":
-        return
-    # Hermes owns its environment: refresh the plugin (its python_dependencies are generated from
-    # requirements.txt minus python-telegram-bot) and let Hermes's package manager sync it.
-    env = {**os.environ, "HERMES_PROFILE": config.hermes_profile}
-    if os.path.isabs(config.hermes_bin):  # cron's PATH may not include Hermes's launcher
-        env["PATH"] = f"{Path(config.hermes_bin).parent}:{env.get('PATH', '')}"
-    subprocess.run([str(config.main / "hermes_profile/setup.sh"), "sync"], env=env, check=True,
-                   capture_output=True)
 
 
 def restart_hermes_gateway(config: Config) -> subprocess.CompletedProcess:
