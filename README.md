@@ -289,7 +289,7 @@ Watch it run on your Mac. `/factory` starts the dashboard for you when it isn't 
 yourself, from your checkout:
 
 ```bash
-python3 factory/serve.py &                       # reads .env for the database
+python factory/serve.py &     # use the bot's python (the one with psycopg), not macOS's own python3
 open http://localhost:8000/dashboard.html        # add ?demo to see sample jobs
 ```
 

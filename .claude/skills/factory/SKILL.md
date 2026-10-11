@@ -142,8 +142,10 @@ At the start of every `/factory` command, if nothing answers on port 8000, start
 background from the repo root and give the user the link:
 
 ```
+# the first python that has the bot's packages (macOS's own python3 usually doesn't)
+PY=$(for p in "${BOT_PYTHON:-}" python3 python; do [ -n "$p" ] && "$p" -c 'import psycopg, dotenv' 2>/dev/null && command -v "$p" && break; done)
 curl -s -o /dev/null http://127.0.0.1:8000/dashboard.html || \
-  nohup python3 factory/serve.py 8000 >/dev/null 2>&1 &
+  nohup "${PY:-python3}" factory/serve.py 8000 >/dev/null 2>&1 &
 open http://localhost:8000/dashboard.html   # macOS; first time only
 ```
 
