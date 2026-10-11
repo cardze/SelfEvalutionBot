@@ -52,7 +52,10 @@
   .chip.CHANGES { background: var(--changes-bg); color: var(--changes); }
   .badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
   .badge.APPROVE { background: var(--pass-bg); color: var(--pass); }
-  .badge.ESCALATE { background: var(--human-bg); color: var(--human); }
+  .badge.ESCALATE, .badge.REJECTED, .badge.FAILED { background: var(--human-bg); color: var(--human); }
+  .badge.MERGED { background: var(--pass-bg); color: var(--pass); }
+  .card.runner { border-style: dashed; }
+  .card .waiting { font-size: 11px; color: var(--human); margin-top: 4px; }
   .tag { margin-left: 6px; font-size: 10px; color: var(--accent); font-weight: 400; white-space: nowrap; }
   .empty { color: var(--muted); font-size: 12px; padding: 6px; }
   #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100%); background: var(--panel);
@@ -92,11 +95,17 @@
 // Stages in loop order; "needs-human" is drawn as its own band above the board.
 const STAGES = [
   ["spec", "Spec", "spec-writer"], ["build", "Build", "builder"], ["review", "Review", "4 reviewers"],
-  ["approve", "Approve", "approver"], ["merged", "Merged", "main"],
+  ["approve", "Approve", "approver"], ["merged", "Done", "main"],
 ];
 const REVIEWERS = ["security", "ux", "ui", "code"];
 const DEMO = new URLSearchParams(location.search).has("demo");
-let board = { jobs: [] }, openJob = null;
+let board = { jobs: [] }, runner = { runs: [] }, openJob = null;
+
+// Factory jobs and runner runs, each with a unique key for the drawer.
+const allJobs = () => [
+  ...(board.jobs || []).map(j => ({ ...j, key: j.id })),
+  ...(runner.runs || []).map(j => ({ ...j, key: "runner:" + j.id, runner: true })),
+];
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -110,16 +119,19 @@ function card(job) {
   const rounds = (job.history || []).map((r, i) => chips(r, i + 1));
   if (job.stage === "review") rounds.push(chips(job.reviews, job.round));
   const badge = job.decision ? ` <span class="badge ${esc(job.decision)}">${esc(job.decision)}</span>` : "";
-  const source = job.feedback_id ? `<span class="tag" title="feedback ${esc(job.feedback_id)}">from /feedback</span>` : "";
-  return `<div class="card" onclick="openDrawer('${esc(job.id)}')">
+  const source = job.runner ? `<span class="tag">runner</span>`
+    : job.feedback_id ? `<span class="tag" title="feedback ${esc(job.feedback_id)}">from /feedback</span>` : "";
+  const waiting = job.waiting ? `<div class="waiting">${esc(job.waiting)}</div>` : "";
+  const tries = job.build_attempts ? ` · build attempt ${esc(job.build_attempts)}` : "";
+  return `<div class="card${job.runner ? " runner" : ""}" onclick="openDrawer('${esc(job.key)}')">
     <div class="id">${esc(job.id)}${badge}</div>
     <div class="title">${esc(job.title || job.id)}${source}</div>
-    ${rounds.join("")}
-    <div class="meta">${esc(job.branch || "")}</div></div>`;
+    ${rounds.join("")}${waiting}
+    <div class="meta">${esc(job.branch || "")}${tries}</div></div>`;
 }
 
 function render() {
-  const jobs = board.jobs || [];
+  const jobs = allJobs();
   document.getElementById("board").innerHTML = STAGES.map(([key, label, agent]) => {
     const here = jobs.filter(j => j.stage === key);
     return `<div class="col"><h2>${label}<span class="agent">${agent}</span></h2><div class="lane">
@@ -135,19 +147,25 @@ function render() {
 
 async function poll() {
   try {
-    if (DEMO) board = DEMO_BOARD;
-    else board = await (await fetch("board.json", { cache: "no-store" })).json();
-    document.getElementById("status").textContent =
-      (DEMO ? "demo data · " : "") + "updated " + new Date().toLocaleTimeString();
+    if (DEMO) { board = DEMO_BOARD; runner = DEMO_RUNNER; }
+    else {
+      board = await (await fetch("board.json", { cache: "no-store" })).json();
+      // runner.json comes from factory/serve.py; with a plain static server it is simply absent.
+      const res = await fetch("runner.json", { cache: "no-store" }).catch(() => null);
+      runner = res && res.ok ? await res.json() : { runs: [], error: "start factory/serve.py to see the runner" };
+    }
+    document.getElementById("status").textContent = (DEMO ? "demo data · " : "") + "updated " +
+      new Date().toLocaleTimeString() + (runner.error ? " · runner: " + runner.error : "");
     render();
     if (openJob) refreshTabs();
   } catch (e) {
-    document.getElementById("status").textContent = "can't read board.json — on your Mac, run python3 -m http.server 8000 --bind 127.0.0.1 --directory factory";
+    document.getElementById("status").textContent = "can't read board.json — on your Mac, run python3 factory/serve.py";
   }
 }
 
 // Every file a job can have, derived from the folder layout in SKILL.md.
 function jobFiles(job) {
+  if (job.runner) return Object.keys(job.files || {});
   const files = ["spec.md", "build.md", "rework.md"];
   const rounds = Math.max(job.round || 0, (job.history || []).length);
   for (let n = 1; n <= rounds; n++) REVIEWERS.forEach(r => files.push(`round-${n}/review-${r}.md`));
@@ -156,6 +174,7 @@ function jobFiles(job) {
 }
 
 async function load(job, file) {
+  if (job.runner) return (job.files || {})[file] ?? null;
   if (DEMO) return (DEMO_FILES[job.id] || {})[file] ?? null;
   const res = await fetch(`jobs/${job.id}/${file}`, { cache: "no-store" });
   return res.ok ? res.text() : null;
@@ -163,7 +182,7 @@ async function load(job, file) {
 
 let current = null, available = [];
 async function refreshTabs() {
-  const job = (board.jobs || []).find(j => j.id === openJob);
+  const job = allJobs().find(j => j.key === openJob);
   if (!job) return;
   const found = [];
   for (const f of jobFiles(job)) { const t = await load(job, f); if (t !== null) found.push([f, t]); }
@@ -224,6 +243,15 @@ const DEMO_BOARD = { jobs: [
               { security: "PASS", ux: "CHANGES", ui: "PASS", code: "PASS" }] },
   { id: "004-help-grouping", title: "Group /help by topic", branch: "factory/004-help-grouping", stage: "build", round: 0 },
   { id: "005-meal-history", title: "Remember the last 3 /meal picks", branch: "factory/005-meal-history", stage: "spec", round: 0 },
+] };
+const DEMO_RUNNER = { runs: [
+  { id: "add-calc-examples", title: "calc gives no hint when I type it wrong", branch: "auto/6f1c2a90",
+    stage: "needs-human", runner_stage: "awaiting_decision", waiting: "waiting for ✅ Merge in Telegram",
+    files: { "feedback.md": "# Feedback\n## What didn't meet expectations\ncalc gives no hint when I type it wrong\n## Suggested fix\nshow an example",
+             "plan.md": "# Plan\nAdd an example line to the /calc error replies." } },
+  { id: "4b7e19d2", title: "reminders list is hard to read", branch: "auto/4b7e19d2", stage: "build",
+    runner_stage: "building", build_attempts: 2,
+    files: { "feedback.md": "# Feedback\n## What didn't meet expectations\nreminders list is hard to read" } },
 ] };
 const DEMO_FILES = {
   "002-feedback-rate-limit": {

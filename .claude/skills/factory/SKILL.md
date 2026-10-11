@@ -143,9 +143,11 @@ background from the repo root and give the user the link:
 
 ```
 curl -s -o /dev/null http://127.0.0.1:8000/dashboard.html || \
-  nohup python3 -m http.server 8000 --bind 127.0.0.1 --directory factory >/dev/null 2>&1 &
+  nohup python3 factory/serve.py 8000 >/dev/null 2>&1 &
 open http://localhost:8000/dashboard.html   # macOS; first time only
 ```
 
-It binds to 127.0.0.1 only, so job files are not shared on the network. It polls `board.json`;
+It binds to 127.0.0.1 only, so job files are not shared on the network. `serve.py` also reads the
+autonomous runner's runs from the database (read-only) and the dashboard draws them as dashed
+"runner" cards next to factory jobs; a run waiting for ✅ Merge shows under Needs human. It polls `board.json`;
 you never need to touch it.

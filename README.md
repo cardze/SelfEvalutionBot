@@ -289,9 +289,13 @@ Watch it run on your Mac. `/factory` starts the dashboard for you when it isn't 
 yourself, from your checkout:
 
 ```bash
-python3 -m http.server 8000 --bind 127.0.0.1 --directory factory &
+python3 factory/serve.py &                       # reads .env for the database
 open http://localhost:8000/dashboard.html        # add ?demo to see sample jobs
 ```
+
+The dashboard also shows the hourly runner's runs as dashed "runner" cards: planning in Spec, building
+in Build, waiting for your ✅ Merge under Needs human, and the last 10 merged, rejected or failed runs
+in Done. Click one to read its feedback, plan and last error.
 
 ## Run the bot on Hermes
 

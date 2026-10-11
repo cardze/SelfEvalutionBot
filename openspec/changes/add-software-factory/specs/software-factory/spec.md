@@ -45,6 +45,14 @@ send it back to the builder with the note in `rework.md` and start a new review 
 `factory/dashboard.html` SHALL render every job in `board.json` as a card in its stage, show each review
 round as a row of four reviewer chips, set needs-human jobs apart, and open a job's markdown files on click.
 
+#### Scenario: The runner is waiting on the admin
+- **WHEN** `factory/serve.py` serves the dashboard and an `auto_runs` row is `awaiting_decision`
+- **THEN** a runner card for it shows under Needs human, saying it waits for ✅ Merge in Telegram
+
+#### Scenario: No database
+- **WHEN** `factory/serve.py` cannot connect to PostgreSQL
+- **THEN** factory jobs still show and the status line names the runner error
+
 #### Scenario: A verdict lands
 - **WHEN** the orchestrator sets a reviewer to `PASS` in `board.json`
 - **THEN** that chip turns green within one poll

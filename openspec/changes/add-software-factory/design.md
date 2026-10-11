@@ -10,6 +10,7 @@
 | `.claude/agents/approver.md` | opus; writes `decision.md` (APPROVE / ESCALATE) |
 | `factory/board.json` | Durable state, read by the dashboard |
 | `factory/backlog.md` | `- [ ]` queue for `/factory next` |
+| `factory/serve.py` | Local server for the dashboard (127.0.0.1) plus `/runner.json` from `auto_runs` |
 | `factory/dashboard.html` | Self-contained board served on the user's Mac (127.0.0.1:8000), polls `board.json` every 2 s, `?demo` shows sample data |
 
 ## Decisions
@@ -32,5 +33,10 @@
   Only the orchestrator touches the database; agents get the feedback text as untrusted data. No
   schema change: the factory does not claim a submission in the database, so the board's
   `feedback_id` is what stops a second factory job on it, and the runner can still pick it up.
-- **D7 Verdict lines.** Reviews start with `VERDICT: PASS|CHANGES`; `decision.md` starts with
+- **D7 Runner on the board.** `factory/serve.py` serves the dashboard and `GET /runner.json`, which
+  reads `auto_runs` joined to the feedback (read-only, in-flight runs plus the last 10 finished) and
+  maps each run to a card: planning/planned → Spec, building → Build, awaiting_decision → Needs human,
+  merged/rejected/failed → Done. The runner itself is unchanged. Without a database the board still
+  shows factory jobs and names the error.
+- **D8 Verdict lines.** Reviews start with `VERDICT: PASS|CHANGES`; `decision.md` starts with
   `APPROVE|ESCALATE`. The orchestrator and the dashboard parse only that first line.
