@@ -265,6 +265,7 @@ repo, run:
 ```
 /factory <feature>                run a new job through the loop
 /factory next                     run the first unchecked item in factory/backlog.md
+/factory feedback [<id>]          build the next actionable /feedback submission (or that one)
 /factory approve <job-id>         merge a needs-human job into main
 /factory rework <job-id> <note>   send a job back to the builder with feedback
 ```
@@ -279,6 +280,10 @@ The session that runs `/factory` is the orchestrator (`.claude/skills/factory/SK
 subagent in `.claude/agents/`. Agents read and write markdown in `factory/jobs/<job-id>/`, the builder
 commits on `factory/<job-id>` in a worktree, and merges are local (you push). Factory jobs may not
 touch the Hermes integration, `runner/` or `requirements.txt`.
+
+`/factory feedback` takes items from the same queue as `python ask.py next` and resolves the
+submission when its job merges. The runner skips feedback it is already building, but not feedback a
+factory job holds, so pick one of the two for a given submission.
 
 Watch it run on your Mac. `/factory` starts the dashboard for you when it isn't running; to start it
 yourself, from your checkout:

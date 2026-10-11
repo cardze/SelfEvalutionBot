@@ -53,6 +53,7 @@
   .badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
   .badge.APPROVE { background: var(--pass-bg); color: var(--pass); }
   .badge.ESCALATE { background: var(--human-bg); color: var(--human); }
+  .tag { margin-left: 6px; font-size: 10px; color: var(--accent); font-weight: 400; white-space: nowrap; }
   .empty { color: var(--muted); font-size: 12px; padding: 6px; }
   #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100%); background: var(--panel);
             border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s;
@@ -109,9 +110,10 @@ function card(job) {
   const rounds = (job.history || []).map((r, i) => chips(r, i + 1));
   if (job.stage === "review") rounds.push(chips(job.reviews, job.round));
   const badge = job.decision ? ` <span class="badge ${esc(job.decision)}">${esc(job.decision)}</span>` : "";
+  const source = job.feedback_id ? `<span class="tag" title="feedback ${esc(job.feedback_id)}">from /feedback</span>` : "";
   return `<div class="card" onclick="openDrawer('${esc(job.id)}')">
     <div class="id">${esc(job.id)}${badge}</div>
-    <div class="title">${esc(job.title || job.id)}</div>
+    <div class="title">${esc(job.title || job.id)}${source}</div>
     ${rounds.join("")}
     <div class="meta">${esc(job.branch || "")}</div></div>`;
 }
@@ -214,7 +216,7 @@ const DEMO_BOARD = { jobs: [
     stage: "merged", round: 1, decision: "APPROVE", reviews: { security: "PASS", ux: "PASS", ui: "PASS", code: "PASS" },
     history: [{ security: "PASS", ux: "PASS", ui: "PASS", code: "PASS" }] },
   { id: "002-feedback-rate-limit", title: "Rate-limit /feedback", branch: "factory/002-feedback-rate-limit",
-    stage: "review", round: 2, reviews: { security: "PASS", ux: "PASS", ui: "pending", code: "pending" },
+    stage: "review", round: 2, feedback_id: "6f1c2a90-0000-4000-8000-000000000000", reviews: { security: "PASS", ux: "PASS", ui: "pending", code: "pending" },
     history: [{ security: "CHANGES", ux: "PASS", ui: "PASS", code: "CHANGES" }] },
   { id: "003-reminder-timezones", title: "Show reminder times in the user's timezone", branch: "factory/003-reminder-timezones",
     stage: "needs-human", round: 3, decision: "ESCALATE", reviews: { security: "PASS", ux: "CHANGES", ui: "PASS", code: "PASS" },

@@ -27,5 +27,10 @@
   `/factory approve`.
 - **D5 OpenSpec still applies.** When a job changes a command, schema, service method or dependency,
   the builder adds `openspec/changes/<job-id>/` derived from `spec.md`.
-- **D6 Verdict lines.** Reviews start with `VERDICT: PASS|CHANGES`; `decision.md` starts with
+- **D6 Bot feedback as input.** `/factory feedback` reads the planner queue with `ask.py next`
+  (no new query) and, after a merge, calls `FeedbackService.resolve_submission` like the runner does.
+  Only the orchestrator touches the database; agents get the feedback text as untrusted data. No
+  schema change: the factory does not claim a submission in the database, so the board's
+  `feedback_id` is what stops a second factory job on it, and the runner can still pick it up.
+- **D7 Verdict lines.** Reviews start with `VERDICT: PASS|CHANGES`; `decision.md` starts with
   `APPROVE|ESCALATE`. The orchestrator and the dashboard parse only that first line.

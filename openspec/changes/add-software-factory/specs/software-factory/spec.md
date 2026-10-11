@@ -16,6 +16,23 @@ in parallel, and approver, in that order, recording the stage in `factory/board.
 - **WHEN** round 3 still has a `CHANGES` verdict
 - **THEN** the approver writes `ESCALATE` and the job's stage is `needs-human`
 
+### Requirement: Jobs can come from bot feedback
+`/factory feedback [<submission-id>]` SHALL take the first actionable submission from
+`FeedbackService.get_actionable_feedback` (or the named one), run it as a job with its `feedback_id`
+on the board, and resolve the submission with `FeedbackService.resolve_submission` after the job merges.
+
+#### Scenario: Feedback job merges
+- **WHEN** a job started from submission S is merged, by APPROVE or `/factory approve`
+- **THEN** S has a `resolved` event and leaves the actionable queue
+
+#### Scenario: Feedback job escalates
+- **WHEN** a job started from submission S ends in `needs-human`
+- **THEN** S stays unresolved
+
+#### Scenario: Empty queue
+- **WHEN** no submission is actionable
+- **THEN** no job is created and the user is told the queue is empty
+
 ### Requirement: People decide escalated jobs
 `/factory approve <job-id>` SHALL merge a `needs-human` job, and `/factory rework <job-id> <note>` SHALL
 send it back to the builder with the note in `rework.md` and start a new review round.
