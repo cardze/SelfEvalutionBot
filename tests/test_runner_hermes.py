@@ -1,6 +1,7 @@
 """Tests for the Hermes Agent backend (add-hermes-agent-backend). No Hermes, Docker, Claude or DB."""
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -349,12 +350,17 @@ def test_exported_skills_requires_leader(config):
 
 
 def test_repo_snapshot_exports(tmp_path):
-    c = Config(main=REPO, workspace_root=tmp_path, bot_python=Path("/usr/bin/python3"),
+    # A git repo of its own: the full suite runs on a `git archive` export with no .git, where a
+    # skip would block every merge (runner/testdb.py treats any skip as a failure).
+    main = tmp_path / "main"
+    shutil.copytree(REPO / ".claude", main / ".claude")
+    env = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "base"]):
+        subprocess.run(["git", "-C", str(main), *args], check=True, capture_output=True, env=env)
+    c = Config(main=main, workspace_root=tmp_path, bot_python=Path("/usr/bin/python3"),
                hermes_home=tmp_path / "hp", agent_backend="hermes")
-    try:
-        names = snapshot.export_hermes_skills(c)
-    except subprocess.CalledProcessError:
-        pytest.skip("no local main branch in this checkout")
+    names = snapshot.export_hermes_skills(c)
     assert {"seb-agent-openspec-leader", "seb-agent-planner", "seb-agent-evaluator",
             "seb-agent-coder", "seb-planner-fetch-feedback"} <= set(names)
 

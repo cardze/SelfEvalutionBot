@@ -286,7 +286,7 @@ def merge_path(config: Config, session: Session, run: dict, submission: dict) ->
         FeedbackService.update_auto_run(run["id"], decision=None, last_error=guard.describe(blocked)[:4000])
         notify.failure(refresh(run), f"Merge refused. {guard.describe(blocked)}")
         return "merge_aborted"
-    # Approved by the admin: run the COMPLETE suite (incl. database tests) on exactly this commit.
+    # Approved by the admin: run the COMPLETE suite (incl. database tests) on main merged with this commit.
     verification = testdb.run_full_suite(config, ref, run["feedback_submission_id"])
     if not verification.ok:
         FeedbackService.update_auto_run(run["id"], decision=None, last_error=verification.summary)

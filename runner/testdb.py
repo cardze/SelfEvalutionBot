@@ -65,7 +65,12 @@ def run_full_suite(config: Config, ref: str, submission_id) -> Verification:
     workdir = config.runner_home / "verify" / short_id(submission_id)
     name = scratch_db_name(submission_id)
     try:
-        export_ref(config, ref, workdir / "src")
+        # Test what the merge will put on main, so fixes that landed on main after the build count.
+        merged = refs.git_main(config, "merge-tree", "--write-tree", "main", ref, check=False)
+        tree = merged.splitlines()[0] if merged else ""
+        if not tree or "CONFLICT" in merged:
+            return Verification(False, "the change conflicts with main")
+        export_ref(config, tree, workdir / "src")
         venv = workdir / "venv"
         subprocess.run([str(config.bot_python), "-m", "venv", str(venv)], check=True, capture_output=True)
         subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
