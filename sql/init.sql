@@ -97,6 +97,9 @@ ALTER TABLE auto_runs DROP CONSTRAINT IF EXISTS auto_runs_decision_check;
 ALTER TABLE auto_runs ADD CONSTRAINT auto_runs_decision_check
     CHECK (decision IN ('merge', 'reject', 'changes', 'build'));
 
+-- Reviewer verdicts from the REVIEW step after BUILD (add-runner-review-step)
+ALTER TABLE auto_runs ADD COLUMN IF NOT EXISTS review_verdicts JSONB;
+
 -- Problems the bot recorded in its events file, suggested to the admin (see runner/signals.py)
 CREATE TABLE IF NOT EXISTS runner_signals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

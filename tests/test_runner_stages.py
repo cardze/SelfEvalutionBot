@@ -65,6 +65,9 @@ class Env:
         self.plan_output = True
         self.full_ok = True
         self.commands = []         # every subprocess command run while faked
+        self.reviews = []          # reviewers named in each REVIEW prompt
+        self.review_says = {}      # reviewer → "CHANGES" (default PASS)
+        self.review_fix = ""       # path the REVIEW fix round commits, when any reviewer says CHANGES
 
 
 @pytest.fixture
@@ -115,6 +118,18 @@ def env(tmp_path, monkeypatch):
                 (path / ".auto/output.json").write_text(json.dumps(
                     {"stage": "planned", "change_name": "add-x", "summary": "Plan summary",
                      "impact": {"changes": "feature_N.py", "risk": "none", "size": "small"}}))
+        elif "stage: REVIEW" in prompt:
+            names = [n for n in ("code", "security", "ux", "ui") if f"`review-{n}`" in prompt]
+            e.reviews.append(names)
+            (path / ".auto/review").mkdir(parents=True, exist_ok=True)
+            for n in names:
+                (path / f".auto/review/review-{n}.md").write_text(
+                    f"VERDICT: {e.review_says.get(n, 'PASS')}\n- finding from {n}\n")
+            if "CHANGES" in [e.review_says.get(n) for n in names] and e.review_fix:
+                (path / e.review_fix).parent.mkdir(parents=True, exist_ok=True)
+                (path / e.review_fix).write_text("FIXED = True\n")
+                _git(path, "add", e.review_fix)
+                _git(path, "commit", "-q", "-m", "fix: address review findings")
         else:
             e.agent_prompts.append("build")
             n = len(e.agent_prompts)
@@ -589,3 +604,60 @@ def test_scan_failure_does_not_block_work(env):
     env.scan_error = RuntimeError("events file is broken")
     new_submission()
     assert rr.tick(env.config) == "awaiting_decision"
+
+
+# ---------- REVIEW step (add-runner-review-step) ----------
+
+
+def test_review_runs_after_build_and_reaches_the_merge_request(env):
+    sub = new_submission()
+    assert rr.tick(env.config) == "awaiting_decision"
+    assert env.reviews == [["code", "security"]]  # the fake build changes no bot messages
+    verdicts = run_row(sub)["review_verdicts"]
+    assert {n: v["verdict"] for n, v in verdicts.items()} == {
+        "code": "PASS", "security": "PASS", "ux": "SKIPPED", "ui": "SKIPPED"}
+    assert "finding from code" in verdicts["code"]["findings"]
+    review_line = env.notes[-1][1][-1]
+    assert review_line.startswith("Review: code ✅ · security ✅") and "ux, ui not run" in review_line
+
+
+def test_review_fix_is_retested_and_shown_as_fixed(env, monkeypatch):
+    env.review_says = {"security": "CHANGES"}
+    env.review_fix = "feature_fix.py"
+    calls = []
+    monkeypatch.setattr(verify, "run", lambda c, p, t: calls.append(p) or verify.Verification(True, "3 passed"))
+    sub = new_submission()
+    assert rr.tick(env.config) == "awaiting_decision"
+    assert len(calls) == 2  # after BUILD, and again after the fix round
+    assert run_row(sub)["review_verdicts"]["security"]["verdict"] == "FIXED"
+    assert "security 🔧 fixed" in env.notes[-1][1][-1]
+    # The review branch points at the fixed commit, not the one BUILD made.
+    assert "feature_fix.py" in refs.changed_paths(env.config, refs.ref_name(sub))
+
+
+def test_unfixed_changes_still_reach_the_admin(env):
+    env.review_says = {"code": "CHANGES"}
+    sub = new_submission()
+    assert rr.tick(env.config) == "awaiting_decision"
+    assert run_row(sub)["review_verdicts"]["code"]["verdict"] == "CHANGES"
+    assert "code ⚠️ changes not fixed" in env.notes[-1][1][-1]
+
+
+def test_failing_tests_after_the_fix_round_count_as_a_failed_build(env, monkeypatch):
+    env.review_says = {"code": "CHANGES"}
+    env.review_fix = "feature_fix.py"
+    results = iter([True, False])
+    monkeypatch.setattr(verify, "run", lambda c, p, t: verify.Verification(next(results), "1 failed"))
+    sub = new_submission()
+    assert rr.tick(env.config) == "retry"
+    run = run_row(sub)
+    assert run["stage"] == "building" and "after the review fixes" in run["last_error"]
+
+
+def test_review_fix_touching_hermes_is_refused(env):
+    env.review_says = {"security": "CHANGES"}
+    env.review_fix = "hermes_plugin/seb/__init__.py"
+    sub = new_submission()
+    assert rr.tick(env.config) == "failed"
+    assert "REVIEW fix refused" in env.notes[-1][1][1]
+    assert run_row(sub)["stage"] == "failed"

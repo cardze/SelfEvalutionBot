@@ -105,11 +105,14 @@ def sensitive_section(paths: list[str]) -> str:
 
 
 def merge_request(run: dict, submission: dict, summary: str, diffstat: str,
-                  tests: str, new_deps: list[str], review_cmd: str, sensitive: list[str] = ()) -> int:
+                  tests: str, new_deps: list[str], review_cmd: str, sensitive: list[str] = (),
+                  review_line: str = "") -> int:
     deps = "\n".join(f"📦 New dependency: {d}" for d in new_deps) or "No new dependencies"
+    review = f"{review_line}\n" if review_line else ""
     message_id = send(
         f"🔀 Ready to merge: {run['change_name']}\n{feedback_line(submission)}\n\n{summary}\n\n"
-        f"Changes:\n{diffstat}\n\n{sensitive_section(list(sensitive))}Tests: {tests}\n{deps}\n\n"
+        f"Changes:\n{diffstat}\n\n{sensitive_section(list(sensitive))}Tests: {tests}\n"
+        f"{review}{deps}\n\n"
         f"Review by diff (never check out in the main checkout):\n{review_cmd}",
         reply_markup=decision_keyboard(run["id"]),
     )

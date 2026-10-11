@@ -47,6 +47,10 @@ def diffstat(config: Config, ref: str) -> str:
     return git_main(config, "diff", "--no-ext-diff", "--no-textconv", "--stat", f"main...{ref}") or "(no changes)"
 
 
+def head(config: Config, ref: str) -> str:
+    return git_main(config, "rev-parse", "--verify", f"{ref}^{{commit}}")
+
+
 def added_requirements(config: Config, ref: str) -> list[str]:
     """Requirement lines added on the branch — the source of truth for new dependencies."""
     diff = git_main(config, "diff", "--no-ext-diff", "--no-textconv", f"main...{ref}", "--", "requirements.txt")

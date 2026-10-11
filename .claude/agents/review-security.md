@@ -21,3 +21,7 @@ user text echoed with Markdown/HTML parse modes, and any change to `hermes_profi
 Write **only** `factory/jobs/<job-id>/round-<n>/review-security.md`. Its first line is exactly
 `VERDICT: PASS` or `VERDICT: CHANGES`. Then a short list of findings, each with `file:line`, what is
 wrong, and the fix. CHANGES only for real problems; style nits never block.
+
+**Runner mode.** When your task begins with `AUTONOMOUS RUNNER RUN`, there is no factory job folder:
+review `git diff main...HEAD` in the current workspace against the OpenSpec change it names, and
+write only `.auto/review/review-security.md`, with the same first line and findings format.

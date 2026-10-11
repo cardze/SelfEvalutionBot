@@ -16,8 +16,10 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from psycopg.types.json import Jsonb
+
 from clarify import get_admin_user_id
-from runner import agent, guard, hermes, notify, refs, selftest, signals, snapshot, templates, testdb, validate, verify
+from runner import agent, guard, hermes, notify, refs, review, selftest, signals, snapshot, templates, testdb, validate, verify
 from runner import workspace as ws
 from runner.config import Config, load_config, load_main_secrets, read_token
 from storage import ClarificationError, FeedbackService
@@ -189,7 +191,7 @@ def send_held_plan(run: dict, submission: dict) -> str:
 
 def do_build(config: Config, session: Session, run: dict, submission: dict) -> str:
     path = Path(run["workspace_path"])
-    FeedbackService.update_auto_run(run["id"], stage="building")
+    FeedbackService.update_auto_run(run["id"], stage="building", review_verdicts=None)
     run = refresh(run)
     drop_review_branch(config, run)  # a new BUILD makes the reviewed commit stale
     session.ensure_ready(path)
@@ -218,6 +220,10 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
     verification = verify.run(config, path, session.token)
     if not verification.ok:
         return build_failed(config, run, f"Tests failed in the sandbox: {verification.summary}")
+    outcome, ref, verdicts, verification = do_review(config, session, run, path, ref, verification)
+    if outcome:
+        return outcome
+    out["new_dependencies"] = refs.added_requirements(config, ref)  # the fix round may have added some
     # Branch before stage: a crash in between resumes as 'building', which drops the branch again.
     reason = refs.set_review_branch(config, run["change_name"], ref)
     if reason:
@@ -230,8 +236,39 @@ def do_build(config: Config, session: Session, run: dict, submission: dict) -> s
         out["new_dependencies"],
         f"git -C {config.main} diff main...{refs.review_branch(run['change_name']).removeprefix('refs/heads/')}",
         refs.sensitive_paths(refs.changed_paths(config, ref)),
+        review.summary_line(verdicts),
     )
     return "awaiting_decision"
+
+
+def do_review(config: Config, session: Session, run: dict, path: Path, ref: str, verification):
+    """REVIEW (add-runner-review-step): reviewers on the diff, one fix round, tests again if it changed.
+
+    Returns (outcome, ref, verdicts, verification); outcome is "" to go on to the merge request.
+    """
+    reviewers = review.reviewers_for([text for _, text in refs.added_lines(config, ref)])
+    review.clear(path)
+    prompt = render_prompt(config, "review.md", BRANCH=run["branch"], CHANGE_NAME=run["change_name"],
+                           REVIEWERS=review.agent_names(reviewers))
+    result = agent.run(config, path, prompt, config.build, token=session.token,
+                       agents_json=session.agents_json)
+    log.info("REVIEW finished ok=%s cost=$%.2f reviewers=%s", result.ok, result.cost_usd, ",".join(reviewers))
+    if result.auth_failed:
+        return auth_problem(config, run), ref, {}, verification
+    built = refs.head(config, ref)
+    ref = refs.fetch(config, path, run["feedback_submission_id"])
+    fixed = refs.head(config, ref) != built
+    verdicts = review.read_verdicts(path, reviewers, fixed)
+    FeedbackService.update_auto_run(run["id"], review_verdicts=Jsonb(verdicts))
+    if fixed:
+        blocked = guard.violations(config, ref)
+        if blocked:
+            return fail(run, f"REVIEW fix refused: {guard.describe(blocked)}"), ref, verdicts, verification
+        verification = verify.run(config, path, session.token)
+        if not verification.ok:
+            return (build_failed(config, run, f"Tests failed after the review fixes: {verification.summary}"),
+                    ref, verdicts, verification)
+    return "", ref, verdicts, verification
 
 
 def merge_path(config: Config, session: Session, run: dict, submission: dict) -> str:

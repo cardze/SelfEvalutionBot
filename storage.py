@@ -489,7 +489,7 @@ class FeedbackService:
     _AUTO_RUN_FIELDS = (
         "stage", "change_name", "last_error", "build_attempts", "decision",
         "decision_note", "merge_request_message_id", "note_prompt_message_id",
-        "plan_summary", "plan_message_id",
+        "plan_summary", "plan_message_id", "review_verdicts",
     )
 
     @staticmethod
