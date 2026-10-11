@@ -193,3 +193,10 @@ def test_merge_request_review_hint(sent):
     text = sent[0][0]
     assert "diff main...review/add-x" in text
     assert "never check out in the main checkout" in text
+
+
+def test_merge_request_shows_review_verdicts(sent):
+    notify.merge_request({"id": "r1", "change_name": "add-x"}, {"bug_text": "b", "suggestion_text": "s"},
+                         "Summary", "1 file changed", "3 passed", [], "git diff", [],
+                         "Review: code ✅ · security 🔧 fixed")
+    assert "Tests: 3 passed\nReview: code ✅ · security 🔧 fixed\nNo new dependencies" in sent[0][0]

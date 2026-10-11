@@ -15,3 +15,7 @@ mode used correctly (no broken `*` or `_`), lists and numbers aligned.
 Write **only** `factory/jobs/<job-id>/round-<n>/review-ui.md`. First line exactly `VERDICT: PASS`
 or `VERDICT: CHANGES`, then findings with `file:line` and the fix. If the job sends no messages,
 PASS with one line saying so.
+
+**Runner mode.** When your task begins with `AUTONOMOUS RUNNER RUN`, there is no factory job folder:
+review `git diff main...HEAD` in the current workspace against the OpenSpec change it names, and
+write only `.auto/review/review-ui.md`, with the same first line and findings format.

@@ -104,3 +104,14 @@ def test_failed_run_is_open_and_waits_on_the_admin():
     card = serve.run_card(_run(stage="failed", last_error="boom"))
     assert card["stage"] == "needs-human"
     assert "Reject" in card["waiting"]
+
+
+def test_review_verdicts_become_a_round_of_chips_and_a_file():
+    verdicts = {"code": {"verdict": "PASS", "findings": "VERDICT: PASS"},
+                "security": {"verdict": "FIXED", "findings": "VERDICT: CHANGES\n- bot.py:9 log leaks token"},
+                "ux": {"verdict": "SKIPPED", "findings": ""}, "ui": {"verdict": "SKIPPED", "findings": ""}}
+    card = serve.run_card(_run(stage="awaiting_decision", review_verdicts=verdicts))
+    assert card["history"] == [{"code": "PASS", "security": "FIXED", "ux": "SKIPPED", "ui": "SKIPPED"}]
+    assert "## security: FIXED\nVERDICT: CHANGES\n- bot.py:9 log leaks token" in card["files"]["review.md"]
+    assert "ux" not in card["files"]["review.md"]
+    assert serve.run_card(_run())["history"] == []

@@ -52,7 +52,9 @@
   .chip { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--pending-bg);
           color: var(--pending); }
   .chip.PASS { background: var(--pass-bg); color: var(--pass); }
-  .chip.CHANGES { background: var(--changes-bg); color: var(--changes); }
+  .chip.CHANGES, .chip.MISSING { background: var(--changes-bg); color: var(--changes); }
+  .chip.FIXED { background: var(--pass-bg); color: var(--pass); }
+  .chip.SKIPPED { opacity: .45; }
   .badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
   .badge.APPROVE { background: var(--pass-bg); color: var(--pass); }
   .badge.ESCALATE, .badge.REJECTED, .badge.FAILED { background: var(--human-bg); color: var(--human); }
@@ -268,6 +270,7 @@ const DEMO_RUNNER = { status: { last_tick: "2026-10-11 04:00:02", outcome: "thro
     files: { "feedback.md": "# Feedback\n## What didn't meet expectations\nmeal picker keeps suggesting the same dish\n## Suggested fix\nskip the last 3 picks" } },
   { id: "add-calc-examples", title: "calc gives no hint when I type it wrong", branch: "auto/6f1c2a90",
     stage: "needs-human", runner_stage: "awaiting_decision", waiting: "waiting for ✅ Merge in Telegram",
+    history: [{ security: "FIXED", code: "PASS", ux: "SKIPPED", ui: "SKIPPED" }],
     files: { "feedback.md": "# Feedback\n## What didn't meet expectations\ncalc gives no hint when I type it wrong\n## Suggested fix\nshow an example",
              "plan.md": "# Plan\nAdd an example line to the /calc error replies." } },
   { id: "4b7e19d2", title: "reminders list is hard to read", branch: "auto/4b7e19d2", stage: "build",

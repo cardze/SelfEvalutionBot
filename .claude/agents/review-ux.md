@@ -14,3 +14,7 @@ errors written for a person, not a stack trace? Does it behave like the existing
 
 Write **only** `factory/jobs/<job-id>/round-<n>/review-ux.md`. First line exactly `VERDICT: PASS`
 or `VERDICT: CHANGES`, then findings with `file:line` and the suggested wording or flow.
+
+**Runner mode.** When your task begins with `AUTONOMOUS RUNNER RUN`, there is no factory job folder:
+review `git diff main...HEAD` in the current workspace against the OpenSpec change it names, and
+write only `.auto/review/review-ux.md`, with the same first line and findings format.

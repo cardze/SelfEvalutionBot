@@ -53,7 +53,7 @@ QUEUED_DECISIONS = {"merge": "✅ Merge", "reject": "❌ Reject", "changes": "�
 
 RUNS_SQL = """
     SELECT r.id, r.feedback_submission_id, r.branch, r.change_name, r.stage, r.decision,
-           r.decision_note, r.plan_summary, r.build_attempts, r.last_error, r.updated_at,
+           r.decision_note, r.plan_summary, r.review_verdicts, r.build_attempts, r.last_error, r.updated_at,
            s.bug_text, s.suggestion_text
     FROM auto_runs r
     JOIN feedback_submissions s ON s.id = r.feedback_submission_id
@@ -74,6 +74,10 @@ def run_card(run: dict) -> dict:
         files["error.md"] = f"# Last error\n```\n{run['last_error']}\n```\n"
     if run.get("decision_note"):
         files["note.md"] = f"# Your note\n{run['decision_note']}\n"
+    verdicts = run.get("review_verdicts") or {}
+    if verdicts:
+        files["review.md"] = "# Review\n" + "".join(
+            f"## {name}: {v['verdict']}\n{v['findings']}\n" for name, v in verdicts.items() if v["verdict"] != "SKIPPED")
     waiting = {"planned": "waiting for ▶️ Build in Telegram",
                "awaiting_decision": "waiting for ✅ Merge in Telegram",
                "failed": "failed: ❌ Reject or 💬 Request changes in Telegram; no new run starts until then"}.get(run["stage"])
@@ -90,6 +94,8 @@ def run_card(run: dict) -> dict:
         "waiting": waiting,
         "decision": {"merged": "MERGED", "rejected": "REJECTED", "failed": "FAILED"}.get(run["stage"]),
         "build_attempts": run["build_attempts"],
+        # One review round, drawn with the same chips as a factory job's rounds
+        "history": [{name: v["verdict"] for name, v in verdicts.items()}] if verdicts else [],
         "feedback_id": str(run["feedback_submission_id"]),
         "updated": run["updated_at"].isoformat() if run.get("updated_at") else None,
         "files": files,
