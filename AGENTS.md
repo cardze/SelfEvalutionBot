@@ -115,6 +115,17 @@ git show review/<change-name>:path/to/file
 
 ---
 
+## Software factory
+
+`/factory` (`.claude/skills/factory/SKILL.md`) is a second, person-started way to build a feature:
+spec-writer → builder → four reviewers → approver, with agents in `.claude/agents/` talking only through
+files in `factory/jobs/<job-id>/`. It satisfies the OpenSpec-first rule by having the builder add an
+OpenSpec change when the job needs one. The session running `/factory` is the only writer of
+`factory/board.json`. Builders work on `factory/<job-id>` in `factory/worktrees/`, never in the main
+checkout; factory jobs obey the same Hermes boundary as runner-built changes.
+
+---
+
 ## OpenSpec change structure
 
 Each change lives at `openspec/changes/<name>/` and must contain:

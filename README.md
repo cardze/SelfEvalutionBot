@@ -257,6 +257,36 @@ Idle hours start no Claude session. A real run costs one self-test (~$0.05), the
 runner/setup.sh uninstall-agents   # then start bot.py by hand again
 ```
 
+## Software Factory
+
+A small, visible pipeline for building a feature with Claude Code. In a Claude Code session in this
+repo, run:
+
+```
+/factory <feature>                run a new job through the loop
+/factory next                     run the first unchecked item in factory/backlog.md
+/factory approve <job-id>         merge a needs-human job into main
+/factory rework <job-id> <note>   send a job back to the builder with feedback
+```
+
+```
+feature → spec-writer → builder → security · ux · ui · code reviews → approver → merge | needs-human
+                           ▲                    │ any CHANGES (max 2 reworks)
+                           └────────────────────┘
+```
+
+The session that runs `/factory` is the orchestrator (`.claude/skills/factory/SKILL.md`); each step is a
+subagent in `.claude/agents/`. Agents read and write markdown in `factory/jobs/<job-id>/`, the builder
+commits on `factory/<job-id>` in a worktree, and merges are local (you push). Factory jobs may not
+touch the Hermes integration, `runner/` or `requirements.txt`.
+
+Watch it run:
+
+```bash
+cd factory && python3 -m http.server 8000
+# open http://localhost:8000/dashboard.html   (add ?demo to see sample jobs)
+```
+
 ## Run the bot on Hermes
 
 The whole bot can run inside a [Hermes Agent](https://github.com/NousResearch/hermes-agent) Telegram
