@@ -148,6 +148,6 @@ open http://localhost:8000/dashboard.html   # macOS; first time only
 ```
 
 It binds to 127.0.0.1 only, so job files are not shared on the network. `serve.py` also reads the
-autonomous runner's runs from the database (read-only) and the dashboard draws them as dashed
+actionable /feedback queue and the autonomous runner's runs from the database (read-only) and the dashboard draws them as dashed
 "runner" cards next to factory jobs; a run waiting for ✅ Merge shows under Needs human. It polls `board.json`;
 you never need to touch it.

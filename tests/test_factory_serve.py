@@ -47,3 +47,13 @@ def test_files_only_include_what_the_run_has():
     card = serve.run_card(_run(stage="failed", plan_summary="do x", last_error="boom"))
     assert set(card["files"]) == {"feedback.md", "plan.md", "error.md"}
     assert card["decision"] == "FAILED"
+
+
+def test_queued_feedback_card():
+    sub = {"id": uuid4(), "bug_text": "meal picker repeats", "suggestion_text": "skip recent picks",
+           "created_at": datetime(2026, 10, 11, tzinfo=timezone.utc),
+           "clarification_question": "Which picks?", "clarification_answer": "the last 3"}
+    card = serve.queue_card(sub)
+    assert card["stage"] == "queued"
+    assert card["feedback_id"] == str(sub["id"])
+    assert "the last 3" in card["files"]["feedback.md"]

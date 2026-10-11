@@ -3,7 +3,8 @@
     python3 factory/serve.py [port]        # default 8000, bound to 127.0.0.1
 
 Static files come from factory/. GET /runner.json reads the runner's `auto_runs` (read-only) and
-returns them as dashboard cards, so the runner shows up on the same board as /factory jobs.
+returns them as dashboard cards, plus the feedback still waiting to be picked up (the same queue as
+`ask.py next`), so the runner and the /feedback queue show up on the same board as /factory jobs.
 """
 
 import json
@@ -72,6 +73,24 @@ def run_card(run: dict) -> dict:
     }
 
 
+def queue_card(sub: dict) -> dict:
+    """One actionable feedback submission (not yet picked up) as a card in the Queued column."""
+    text = f"# Feedback\n## What didn't meet expectations\n{sub['bug_text']}\n## Suggested fix\n{sub['suggestion_text']}\n"
+    if sub.get("clarification_answer"):
+        text += f"## Clarification\n{sub.get('clarification_question') or ''}\n\n{sub['clarification_answer']}\n"
+    return {
+        "id": str(sub["id"])[:8],
+        "title": sub["bug_text"].splitlines()[0][:80] if sub["bug_text"] else "(no text)",
+        "branch": "",
+        "stage": "queued",
+        "waiting": None,
+        "decision": None,
+        "feedback_id": str(sub["id"]),
+        "updated": sub["created_at"].isoformat() if sub.get("created_at") else None,
+        "files": {"feedback.md": text},
+    }
+
+
 def runner_board() -> dict:
     try:
         # Imported here so the board still serves factory jobs under a python without the bot's deps.
@@ -79,11 +98,14 @@ def runner_board() -> dict:
         from psycopg.rows import dict_row
 
         from db import get_connection
+        from storage import FeedbackService
 
         load_dotenv(FACTORY.parent / ".env")
         with closing(get_connection()) as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(RUNS_SQL, (RECENT_FINISHED,))
-            return {"runs": [run_card(r) for r in cur.fetchall()]}
+            runs = [run_card(r) for r in cur.fetchall()]
+        queue = [queue_card(s) for s in FeedbackService.get_actionable_feedback()["actionable"]]
+        return {"runs": runs + queue}
     except ImportError as e:
         return {"runs": [], "error": f"{e.name} is not installed; run serve.py with the bot's python "
                                      "or pip install -r requirements.txt"}

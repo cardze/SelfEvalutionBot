@@ -7,3 +7,4 @@
 - [x] 1.5 README and AGENTS.md: how to run it and where it sits next to the runner
 - [x] 1.6 `/factory feedback`: queue via `ask.py next`, `feedback_id` on the board, resolve after merge
 - [x] 1.7 `factory/serve.py` + `/runner.json`: runner runs as cards on the dashboard, with tests
+- [x] 1.8 Queued column: actionable /feedback submissions on the dashboard

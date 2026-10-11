@@ -49,6 +49,10 @@ round as a row of four reviewer chips, set needs-human jobs apart, and open a jo
 - **WHEN** `factory/serve.py` serves the dashboard and an `auto_runs` row is `awaiting_decision`
 - **THEN** a runner card for it shows under Needs human, saying it waits for ✅ Merge in Telegram
 
+#### Scenario: New feedback arrives
+- **WHEN** a user submits /feedback and nothing has picked it up yet
+- **THEN** it shows as a card in the Queued column within one poll
+
 #### Scenario: No database
 - **WHEN** `factory/serve.py` cannot connect to PostgreSQL
 - **THEN** factory jobs still show and the status line names the runner error

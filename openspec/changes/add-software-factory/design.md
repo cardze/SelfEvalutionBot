@@ -36,7 +36,8 @@
 - **D7 Runner on the board.** `factory/serve.py` serves the dashboard and `GET /runner.json`, which
   reads `auto_runs` joined to the feedback (read-only, in-flight runs plus the last 10 finished) and
   maps each run to a card: planning/planned → Spec, building → Build, awaiting_decision → Needs human,
-  merged/rejected/failed → Done. The runner itself is unchanged. Without a database the board still
+  merged/rejected/failed → Done. Actionable feedback (`FeedbackService.get_actionable_feedback`, the
+  `ask.py next` queue) is drawn in a Queued column before Spec. The runner itself is unchanged. Without a database the board still
   shows factory jobs and names the error.
 - **D8 Verdict lines.** Reviews start with `VERDICT: PASS|CHANGES`; `decision.md` starts with
   `APPROVE|ESCALATE`. The orchestrator and the dashboard parse only that first line.

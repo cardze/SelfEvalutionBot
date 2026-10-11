@@ -29,9 +29,9 @@
            border: 1px solid var(--human); }
   .human h2 { color: var(--human); }
   .human:empty { display: none; }
-  .board { display: grid; grid-template-columns: repeat(5, minmax(200px, 1fr)); gap: 12px;
+  .board { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px;
            padding: 16px 24px 24px; overflow-x: auto; }
-  .col { min-width: 200px; }
+  .col { min-width: 180px; }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
        margin: 0 0 8px; font-weight: 600; display: flex; justify-content: space-between; }
   h2 .agent { text-transform: none; letter-spacing: 0; font-weight: 400; }
@@ -39,7 +39,7 @@
           border-radius: 10px; border: 1px dashed var(--line); }
   .human .lane { flex-direction: row; flex-wrap: wrap; border: none; padding: 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
-          cursor: pointer; transition: border-color .15s; min-width: 200px; }
+          cursor: pointer; transition: border-color .15s; min-width: 180px; }
   .card:hover { border-color: var(--accent); }
   .card .id { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
   .card .title { margin: 2px 0 6px; font-weight: 500; }
@@ -94,7 +94,7 @@
 <script>
 // Stages in loop order; "needs-human" is drawn as its own band above the board.
 const STAGES = [
-  ["spec", "Spec", "spec-writer"], ["build", "Build", "builder"], ["review", "Review", "4 reviewers"],
+  ["queued", "Queued", "/feedback"], ["spec", "Spec", "spec-writer"], ["build", "Build", "builder"], ["review", "Review", "4 reviewers"],
   ["approve", "Approve", "approver"], ["merged", "Done", "main"],
 ];
 const REVIEWERS = ["security", "ux", "ui", "code"];
@@ -119,7 +119,8 @@ function card(job) {
   const rounds = (job.history || []).map((r, i) => chips(r, i + 1));
   if (job.stage === "review") rounds.push(chips(job.reviews, job.round));
   const badge = job.decision ? ` <span class="badge ${esc(job.decision)}">${esc(job.decision)}</span>` : "";
-  const source = job.runner ? `<span class="tag">runner</span>`
+  const source = job.stage === "queued" ? `<span class="tag">feedback</span>`
+    : job.runner ? `<span class="tag">runner</span>`
     : job.feedback_id ? `<span class="tag" title="feedback ${esc(job.feedback_id)}">from /feedback</span>` : "";
   const waiting = job.waiting ? `<div class="waiting">${esc(job.waiting)}</div>` : "";
   const tries = job.build_attempts ? ` · build attempt ${esc(job.build_attempts)}` : "";
@@ -245,6 +246,8 @@ const DEMO_BOARD = { jobs: [
   { id: "005-meal-history", title: "Remember the last 3 /meal picks", branch: "factory/005-meal-history", stage: "spec", round: 0 },
 ] };
 const DEMO_RUNNER = { runs: [
+  { id: "9d03e6aa", title: "meal picker keeps suggesting the same dish", stage: "queued", feedback_id: "9d03e6aa",
+    files: { "feedback.md": "# Feedback\n## What didn't meet expectations\nmeal picker keeps suggesting the same dish\n## Suggested fix\nskip the last 3 picks" } },
   { id: "add-calc-examples", title: "calc gives no hint when I type it wrong", branch: "auto/6f1c2a90",
     stage: "needs-human", runner_stage: "awaiting_decision", waiting: "waiting for ✅ Merge in Telegram",
     files: { "feedback.md": "# Feedback\n## What didn't meet expectations\ncalc gives no hint when I type it wrong\n## Suggested fix\nshow an example",
