@@ -99,3 +99,16 @@ def test_stale_lock_is_replaced_and_released(tmp_path):
     assert _run_sh(tmp_path).returncode == 0
     assert not lock.exists()  # released by the trap after the tick
     assert "removing stale lock" in (tmp_path / ".seb-runner/logs/runner.log").read_text()
+
+
+def test_settings_let_build_edit_only_inside_its_workspace(tmp_path):
+    c = cfg.Config(main=Path("/Users/x/repo"), workspace_root=Path("/Users/x"),
+                   bot_python=Path("/usr/bin/python3"), runner_home=tmp_path,
+                   snapshot_home=Path("/Users/x/.seb-snapshot"))
+    settings = json.loads(templates.render_settings(c).read_text())
+    assert settings["permissions"]["defaultMode"] == "acceptEdits"
+    edits = [r for r in settings["permissions"]["deny"] if r.startswith("Edit(")]
+    assert all(r.startswith("Edit(//") for r in edits)
+    assert "Edit(//Users/x/repo/**)" in edits
+    assert "Edit(//Users/x/.seb-snapshot/**)" in edits
+    assert f"Edit(/{Path.home()}/.seb-runner/**)" in edits

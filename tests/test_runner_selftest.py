@@ -68,3 +68,14 @@ def test_written_file_fails(tmp_path):
     raw = _events(_use("echo hello > f"), _result("operation not permitted", True))
     check = Check("write", "Bash", "echo", must_not_exist=target)
     assert verdict(check, parse_stream(raw))[0] == "fail"
+
+
+def test_claude_selftest_checks_write_tool_outside_workspace(tmp_path):
+    from runner import selftest
+    from runner.config import Config
+    c = Config(main=tmp_path, workspace_root=tmp_path, bot_python=Path("/usr/bin/python3"), runner_home=tmp_path)
+    [check] = [ch for ch in selftest.build_checks(c, "M") if ch.name == "write-tool outside workspace"]
+    assert check.tool == "Write" and check.must_not_exist == tmp_path / "canary-edit"
+    hermes = Config(main=tmp_path, workspace_root=tmp_path, bot_python=Path("/usr/bin/python3"),
+                    runner_home=tmp_path, agent_backend="hermes")
+    assert all(ch.tool != "Write" for ch in selftest.build_checks(hermes, "M"))
