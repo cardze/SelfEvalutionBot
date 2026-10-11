@@ -48,6 +48,9 @@ STAGE_COLUMNS = {
     "failed": "needs-human",  # still open: it blocks new runs until you reject or retry it
 }
 
+# auto_runs.decision → the Telegram button that set it
+QUEUED_DECISIONS = {"merge": "✅ Merge", "reject": "❌ Reject", "changes": "💬 Request changes", "build": "▶️ Build"}
+
 RUNS_SQL = """
     SELECT r.id, r.feedback_submission_id, r.branch, r.change_name, r.stage, r.decision,
            r.decision_note, r.plan_summary, r.build_attempts, r.last_error, r.updated_at,
@@ -74,6 +77,10 @@ def run_card(run: dict) -> dict:
     waiting = {"planned": "waiting for ▶️ Build in Telegram",
                "awaiting_decision": "waiting for ✅ Merge in Telegram",
                "failed": "failed: ❌ Reject or 💬 Request changes in Telegram; no new run starts until then"}.get(run["stage"])
+    if run.get("decision") and run["stage"] not in ("merged", "rejected"):
+        # Your tap only queues the decision; the runner acts on it at its next tick.
+        tapped = QUEUED_DECISIONS.get(run["decision"], run["decision"])
+        waiting = f"{tapped} queued: the runner acts on it at its next tick (or press the seb-runner cron)"
     return {
         "id": run["change_name"] or str(run["id"])[:8],
         "title": run["bug_text"].splitlines()[0][:80] if run["bug_text"] else "(no text)",

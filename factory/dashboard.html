@@ -144,7 +144,9 @@ function render() {
   }).join("");
   const human = jobs.filter(j => j.stage === "needs-human");
   document.getElementById("human").innerHTML = human.length
-    ? `<h2>Needs human <span class="agent">/factory approve &lt;job-id&gt; · /factory rework &lt;job-id&gt; &lt;note&gt;</span></h2>
+    ? `<h2>Needs human <span class="agent">${[
+         human.some(j => !j.runner) && "/factory approve &lt;job-id&gt; · /factory rework &lt;job-id&gt; &lt;note&gt;",
+         human.some(j => j.runner) && "runner: use the buttons in Telegram"].filter(Boolean).join(" · ")}</span></h2>
        <div class="lane">${human.map(card).join("")}</div>` : "";
   if (!jobs.length) document.getElementById("board").insertAdjacentHTML("beforeend",
     '<div class="empty" style="grid-column:1/-1">No jobs yet. Run <code>/factory next</code> in Claude Code, or open <a href="?demo">the demo</a>.</div>');
