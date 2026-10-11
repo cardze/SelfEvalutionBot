@@ -192,6 +192,9 @@ def test_straight_through_to_merge_request(env):
     assert rr.tick(env.config) == "awaiting_decision"
     assert env.agent_prompts == ["plan", "build"]
     assert kinds(env) == ["planned", "merge_request"]
+    # The runner settings are rendered from the current template on every tick.
+    settings = json.loads(env.config.settings_file.read_text())
+    assert f"{Path.home()}/.hermes" in settings["sandbox"]["filesystem"]["denyRead"]
     run = run_row(sub)
     assert (run["stage"], run["change_name"]) == ("awaiting_decision", "add-x")
     assert Path(run["workspace_path"]).exists()

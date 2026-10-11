@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from clarify import get_admin_user_id
-from runner import agent, guard, hermes, notify, refs, selftest, signals, snapshot, testdb, validate, verify
+from runner import agent, guard, hermes, notify, refs, selftest, signals, snapshot, templates, testdb, validate, verify
 from runner import workspace as ws
 from runner.config import Config, load_config, load_main_secrets, read_token
 from storage import ClarificationError, FeedbackService
@@ -44,6 +44,9 @@ class Session:
                 hermes.ensure_profile(self.config)
                 snapshot.export_hermes_skills(self.config)
             else:
+                # Re-rendered every tick, like the Hermes profile: a pulled template change (e.g. the
+                # ~/.hermes deny of guard-hermes-from-runner) must apply without a manual setup step.
+                templates.render_settings(self.config)
                 self.token = read_token(self.config)
                 self.agents_json = snapshot.agents_json(self.config)
                 snapshot.export_skills(self.config)

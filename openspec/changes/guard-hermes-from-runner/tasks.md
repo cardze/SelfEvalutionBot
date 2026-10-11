@@ -14,6 +14,7 @@
 
 - [x] 3.1 Deny `~/.hermes` in `runner/settings.template.json`
 - [x] 3.2 Self-test check: listing `~/.hermes` is blocked
+- [x] 3.3 Re-render the runner settings on every tick (Claude backend), so a pulled template applies without `runner/setup.sh render-settings`
 
 ## 4. Docs
 
